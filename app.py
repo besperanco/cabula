@@ -133,21 +133,23 @@ def _pick_wsl_distro():
         return None
 
 
-def open_in_wsl(command_text):
+def open_in_wsl(command_text=None):
     """Abre uma janela nova (Windows Terminal, se existir; senão o WSL
-    diretamente) já a correr `command_text`, e deixa a shell aberta a
-    seguir — mostra sempre o que vai correr antes de correr, tal como
-    colar manualmente. Só faz sentido quando a app corre localmente no
-    Windows (é sempre o caso: é a única forma como a Cábula é usada).
+    diretamente) — se `command_text` for dado, já a correr esse comando;
+    caso contrário, só abre a shell. Mostra sempre o que vai correr antes
+    de correr, tal como colar manualmente. Só faz sentido quando a app
+    corre localmente no Windows (é sempre o caso: é a única forma como a
+    Cábula é usada).
 
-    O comando é escrito num script temporário em vez de ir direto na linha
-    de comandos: o Windows Terminal reinterpreta ";" como separador dos
-    seus próprios subcomandos (mesmo dentro de um argumento entre aspas),
-    o que partia comandos com ";" a meio."""
+    Quando ha comando, é escrito num script temporário em vez de ir direto
+    na linha de comandos: o Windows Terminal reinterpreta ";" como
+    separador dos seus próprios subcomandos (mesmo dentro de um argumento
+    entre aspas), o que partia comandos com ";" a meio."""
     try:
         script_path = Path(tempfile.gettempdir()) / f"cabula_wsl_{uuid.uuid4().hex}.sh"
+        command_line = f"{command_text}\n" if command_text else ""
         script_path.write_text(
-            f'rm -f "$0"\n{command_text}\nexec bash\n', encoding="utf-8", newline="\n",
+            f'rm -f "$0"\n{command_line}exec bash\n', encoding="utf-8", newline="\n",
         )
         wsl_script_path = _windows_path_to_wsl(script_path)
         distro = _pick_wsl_distro()
@@ -697,6 +699,9 @@ def main_page():
                         icon="label",
                         on_click=lambda: open_manage_categories_dialog("tag", on_renamed=refresh),
                     ).props("flat dense round").tooltip("Gerir tags").mark("manage-tags")
+                    ui.button(
+                        icon="terminal", on_click=lambda: open_in_wsl(),
+                    ).props("flat dense round").tooltip("Ligar ao WSL").mark("open-wsl")
 
                 with ui.row().classes("gap-2") as category_row:
                     pass
@@ -723,14 +728,6 @@ def main_page():
                                 ),
                             ).props("flat dense round size=sm").tooltip("Copiar comando").mark(
                                 f"cmd-copy-{cmd['id']}"
-                            )
-                            ui.button(
-                                icon="terminal",
-                                on_click=lambda c=cmd: (
-                                    open_in_wsl(c["command"]), db.mark_recent("command", c["id"]),
-                                ),
-                            ).props("flat dense round size=sm").tooltip("Abrir no WSL").mark(
-                                f"cmd-wsl-{cmd['id']}"
                             )
                             ui.button(
                                 icon="edit", on_click=lambda c=cmd: open_command_dialog(c, on_saved=refresh)
