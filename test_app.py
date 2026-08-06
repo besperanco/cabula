@@ -66,6 +66,29 @@ async def test_new_command_category_becomes_a_filter(user: User) -> None:
         db.delete_command(cmd_id)
 
 
+async def test_create_command_with_new_category_via_dialog(user: User) -> None:
+    # regressao: o campo "categoria" chegou a ser um combobox onde escrever
+    # um valor novo so "pegava" se se premisse Enter — clicar direto em
+    # Guardar criava o comando com a categoria por omissao (Linux), em
+    # silencio. Agora e um campo de texto a parte, sempre fiavel.
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='new-command').click()
+    await user.should_see('Novo comando', retries=50)
+    user.find(marker='dialog-command').type('boundary-authenticate-teste-unico')
+    user.find(marker='dialog-description').type('comando de teste')
+    user.find(marker='dialog-new-category').type('Boundary')
+    user.find(marker='dialog-save').click()
+
+    matches = db.search_commands('boundary-authenticate-teste-unico')
+    assert len(matches) == 1, f'esperava 1 resultado, veio {len(matches)}'
+    assert matches[0]['category'] == 'Boundary', f'categoria devia ser Boundary, veio {matches[0]["category"]}'
+    print('NEW CATEGORY VIA DIALOG OK')
+
+    db.delete_command(matches[0]['id'])
+
+
 async def test_add_edit_delete_command(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)
@@ -140,6 +163,26 @@ async def test_new_scenario_category_becomes_a_filter(user: User) -> None:
         print('DYNAMIC SCENARIO CATEGORY OK, new category appears as a filter button')
     finally:
         db.delete_scenario(sc_id)
+
+
+async def test_create_scenario_with_new_category_via_dialog(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    user.find(marker='new-scenario').click()
+    await user.should_see('Novo cenário', retries=50)
+    user.find(marker='scenario-title').type('cenario-boundary-teste-unico')
+    user.find(marker='scenario-new-category').type('Boundary')
+    user.find(marker='step-command-0').type('boundary authenticate')
+    user.find(marker='scenario-save').click()
+
+    matches = db.search_scenarios('cenario-boundary-teste-unico')
+    assert len(matches) == 1, f'esperava 1 resultado, veio {len(matches)}'
+    assert matches[0]['category'] == 'Boundary', f'categoria devia ser Boundary, veio {matches[0]["category"]}'
+    print('NEW SCENARIO CATEGORY VIA DIALOG OK')
+
+    db.delete_scenario(matches[0]['id'])
 
 
 async def test_add_edit_delete_scenario(user: User) -> None:

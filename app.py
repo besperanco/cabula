@@ -100,8 +100,11 @@ def open_command_dialog(existing=None, on_saved=None):
             "dialog-command"
         )
         category_select = ui.select(
-            db.list_command_categories(), label="Categoria", value=db.CATEGORIES[0], new_value_mode="add-unique",
-        ).classes("w-full").props("outlined dense").tooltip("Escreve um nome novo para criar uma categoria")
+            db.list_command_categories(), label="Categoria", value=db.CATEGORIES[0],
+        ).classes("w-full").props("outlined dense")
+        new_category_input = ui.input(label="Ou nova categoria (opcional)").classes("w-full").props(
+            "outlined dense"
+        ).mark("dialog-new-category")
         description_input = ui.textarea(label="Descrição — o que faz").classes("w-full").props(
             "outlined dense autogrow"
         ).mark("dialog-description")
@@ -126,6 +129,8 @@ def open_command_dialog(existing=None, on_saved=None):
         def save():
             command = (command_input.value or "").strip()
             description = (description_input.value or "").strip()
+            # a categoria nova (se escrita) ganha sempre ao valor do dropdown
+            category = (new_category_input.value or "").strip() or category_select.value
             if not command:
                 error_label.set_text("Indica o comando.")
                 return
@@ -134,13 +139,13 @@ def open_command_dialog(existing=None, on_saved=None):
                 return
             if existing:
                 db.update_command(
-                    existing["id"], command, description, category_select.value,
+                    existing["id"], command, description, category,
                     (tags_input.value or "").strip(), (example_input.value or "").strip(),
                     (notes_input.value or "").strip(),
                 )
             else:
                 db.add_command(
-                    command, description, category_select.value,
+                    command, description, category,
                     (tags_input.value or "").strip(), (example_input.value or "").strip(),
                     (notes_input.value or "").strip(),
                 )
@@ -220,8 +225,10 @@ def open_scenario_dialog(existing=None, on_saved=None):
         )
         category_select = ui.select(
             db.list_scenario_categories(), label="Categoria", value=db.SCENARIO_CATEGORIES[0],
-            new_value_mode="add-unique",
-        ).classes("w-full").props("outlined dense").tooltip("Escreve um nome novo para criar uma categoria")
+        ).classes("w-full").props("outlined dense")
+        new_category_input = ui.input(label="Ou nova categoria (opcional)").classes("w-full").props(
+            "outlined dense"
+        ).mark("scenario-new-category")
         description_input = ui.textarea(label="Descrição — quando usar este cenário").classes(
             "w-full"
         ).props("outlined dense autogrow").mark("scenario-description")
@@ -269,6 +276,8 @@ def open_scenario_dialog(existing=None, on_saved=None):
         def save():
             title = (title_input.value or "").strip()
             description = (description_input.value or "").strip()
+            # a categoria nova (se escrita) ganha sempre ao valor do dropdown
+            category = (new_category_input.value or "").strip() or category_select.value
             if not title:
                 error_label.set_text("Indica um título.")
                 return
@@ -282,9 +291,9 @@ def open_scenario_dialog(existing=None, on_saved=None):
                 return
             if existing:
                 scenario_id = existing["id"]
-                db.update_scenario(scenario_id, title, description, category_select.value)
+                db.update_scenario(scenario_id, title, description, category)
             else:
-                scenario_id = db.add_scenario(title, description, category_select.value)
+                scenario_id = db.add_scenario(title, description, category)
             db.replace_steps(scenario_id, steps)
             dialog.close()
             if on_saved:
