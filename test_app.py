@@ -67,6 +67,64 @@ async def test_add_edit_delete_command(user: User) -> None:
     print('DELETE OK')
 
 
+async def test_scenarios_tab_lists_seeded_playbooks(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    await user.should_see('Diagnosticar um pod que não arranca', retries=50)
+    print('SCENARIOS TAB OK, seeded playbook visible')
+
+
+async def test_scenario_detail_shows_ordered_steps(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    await user.should_see('Diagnosticar um pod que não arranca', retries=50)
+
+    scenarios = db.search_scenarios('pod que não arranca')
+    assert len(scenarios) == 1, f'esperava 1 cenario, veio {len(scenarios)}'
+    sc_id = scenarios[0]['id']
+
+    user.find(marker=f'scenario-view-{sc_id}').click()
+    await user.should_see('kubectl describe pod "meu-pod"', retries=50)
+    print('SCENARIO DETAIL OK, steps shown in order')
+
+
+async def test_add_edit_delete_scenario(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    await user.should_see('Cenários', retries=50)
+
+    user.find(marker='new-scenario').click()
+    await user.should_see('Novo cenário', retries=50)
+    user.find(marker='scenario-title').type('cenario-teste-unico-xyz')
+    user.find(marker='step-command-0').type('echo "teste"')
+    user.find(marker='scenario-save').click()
+
+    user.find(marker='scenario-search-input').type('cenario-teste-unico-xyz')
+    await user.should_see('cenario-teste-unico-xyz', retries=100)
+    print('SCENARIO ADD OK, found in results after search')
+
+    matches = db.search_scenarios('cenario-teste-unico-xyz')
+    assert len(matches) == 1, f'esperava 1 resultado na bd, veio {len(matches)}'
+    sc_id = matches[0]['id']
+
+    user.find(marker=f'scenario-delete-{sc_id}').click()
+    await user.should_see('Apagar', retries=50)
+    user.find(marker='confirm-delete-scenario').click()
+
+    for _ in range(100):
+        if db.get_scenario(sc_id) is None:
+            break
+        await asyncio.sleep(0.05)
+    assert db.get_scenario(sc_id) is None, 'cenario ainda existe na bd apos apagar'
+    print('SCENARIO DELETE OK')
+
+
 async def test_theme_toggle(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)

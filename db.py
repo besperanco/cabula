@@ -11,6 +11,7 @@ from pathlib import Path
 DB_FILE = Path(__file__).parent / "cabula.db"
 
 CATEGORIES = ["Linux", "Kubernetes", "OpenStack"]
+SCENARIO_CATEGORIES = CATEGORIES + ["Geral"]
 
 
 def _connect():
@@ -68,6 +69,28 @@ def _ensure_schema():
                 INSERT INTO commands_fts(rowid, command, description, tags, category)
                 VALUES (new.id, new.command, new.description, new.tags, new.category);
             END
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scenarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scenario_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scenario_id INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                command TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT ''
+            )
             """
         )
 
@@ -175,6 +198,97 @@ def _fallback_search(query, category=None):
         sql += " AND category = ?"
         params.append(category)
     sql += " ORDER BY command"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_scenario(title, description, category):
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO scenarios (title, description, category, created_at) VALUES (?, ?, ?, ?)",
+            (title, description, category, datetime.now().isoformat()),
+        )
+        return cur.lastrowid
+
+
+def update_scenario(scenario_id, title, description, category):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE scenarios SET title = ?, description = ?, category = ? WHERE id = ?",
+            (title, description, category, scenario_id),
+        )
+
+
+def delete_scenario(scenario_id):
+    with _connect() as conn:
+        conn.execute("DELETE FROM scenarios WHERE id = ?", (scenario_id,))
+
+
+def replace_steps(scenario_id, steps):
+    """`steps`: lista de tuplos (command, note), pela ordem em que devem
+    aparecer. Substitui por completo os passos existentes do cenário."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM scenario_steps WHERE scenario_id = ?", (scenario_id,))
+        for position, (command, note) in enumerate(steps):
+            conn.execute(
+                "INSERT INTO scenario_steps (scenario_id, position, command, note) VALUES (?, ?, ?, ?)",
+                (scenario_id, position, command, note),
+            )
+
+
+def get_scenario(scenario_id):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM scenarios WHERE id = ?", (scenario_id,)).fetchone()
+        if not row:
+            return None
+        steps = conn.execute(
+            "SELECT * FROM scenario_steps WHERE scenario_id = ? ORDER BY position", (scenario_id,)
+        ).fetchall()
+    scenario = dict(row)
+    scenario["steps"] = [dict(s) for s in steps]
+    return scenario
+
+
+def list_scenarios(category=None):
+    sql = (
+        "SELECT s.*, (SELECT COUNT(*) FROM scenario_steps st WHERE st.scenario_id = s.id) AS step_count "
+        "FROM scenarios s"
+    )
+    params = []
+    if category:
+        sql += " WHERE s.category = ?"
+        params.append(category)
+    sql += " ORDER BY s.title"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_scenarios():
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM scenarios").fetchone()[0]
+
+
+def search_scenarios(query, category=None):
+    """Pesquisa simples por título, descrição e passos. Sem query, devolve
+    a lista completa (opcionalmente filtrada por categoria)."""
+    query = (query or "").strip()
+    if not query:
+        return list_scenarios(category)
+
+    like = f"%{query}%"
+    sql = (
+        "SELECT s.*, (SELECT COUNT(*) FROM scenario_steps st WHERE st.scenario_id = s.id) AS step_count "
+        "FROM scenarios s WHERE (s.title LIKE ? OR s.description LIKE ? OR EXISTS ("
+        "SELECT 1 FROM scenario_steps st WHERE st.scenario_id = s.id AND "
+        "(st.command LIKE ? OR st.note LIKE ?)))"
+    )
+    params = [like, like, like, like]
+    if category:
+        sql += " AND s.category = ?"
+        params.append(category)
+    sql += " ORDER BY s.title"
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
