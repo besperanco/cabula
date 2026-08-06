@@ -188,16 +188,23 @@ def confirm_delete_dialog(cmd, on_deleted=None):
 
 
 def open_scenario_detail(sc):
-    """Mostra os passos ordenados de um cenário, cada um com o comando
-    (copiável) e a nota que explica porque é que esse passo existe."""
+    """Mostra os passos ordenados de um cenário. Os comandos ficam
+    editáveis aqui mesmo — para substituir valores de exemplo (entre
+    aspas) pelos reais antes de colar no terminal, sem precisar de editor
+    externo. Copiar (por passo ou tudo) usa sempre o texto atual do campo,
+    não o original guardado; o cenário em si não é alterado."""
     db.mark_recent("scenario", sc["id"])
     full = db.get_scenario(sc["id"])
     with context.client.content:
         dialog = ui.dialog()
+    command_inputs = []
     with dialog, ui.card().classes("w-full").style("min-width:600px"):
         ui.label(full["title"]).classes("text-lg font-bold")
         if full["description"]:
             ui.label(full["description"]).classes("text-sm opacity-70 mb-2")
+        ui.label("Podes editar os comandos abaixo antes de copiar — não altera o cenário guardado.").classes(
+            "text-xs opacity-60 mb-1"
+        )
 
         for i, step in enumerate(full["steps"], start=1):
             with ui.row().classes("w-full items-start gap-2 mb-1"):
@@ -205,27 +212,29 @@ def open_scenario_detail(sc):
                 with ui.column().classes("gap-0 flex-grow"):
                     if step["command"]:
                         with ui.row().classes("items-center gap-1"):
-                            ui.label(step["command"]).classes(
-                                "font-mono text-sm bg-current/5 rounded px-2 py-1"
-                            )
+                            cmd_input = ui.input(value=step["command"]).classes(
+                                "flex-grow font-mono text-sm"
+                            ).props("outlined dense").mark(f"scenario-step-command-{i}")
+                            command_inputs.append(cmd_input)
                             ui.button(
                                 icon="content_copy",
-                                on_click=lambda c=step["command"]: (
-                                    ui.clipboard.write(c), ui.notify("Comando copiado!")
+                                on_click=lambda inp=cmd_input: (
+                                    ui.clipboard.write(inp.value), ui.notify("Comando copiado!")
                                 ),
                             ).props("flat dense round size=sm").tooltip("Copiar comando")
                     if step["note"]:
                         ui.label(step["note"]).classes("text-xs opacity-70 mt-1")
 
-        all_commands = "\n".join(step["command"] for step in full["steps"] if step["command"])
+        def copy_all():
+            text = "\n".join(inp.value for inp in command_inputs if inp.value)
+            ui.clipboard.write(text)
+            ui.notify("Todos os comandos copiados!")
+
         with ui.row().classes("mt-2 gap-2"):
-            if all_commands:
-                ui.button(
-                    "Copiar tudo", icon="content_copy",
-                    on_click=lambda: (
-                        ui.clipboard.write(all_commands), ui.notify("Todos os comandos copiados!")
-                    ),
-                ).props("outline no-caps").mark("scenario-copy-all")
+            if command_inputs:
+                ui.button("Copiar tudo", icon="content_copy", on_click=copy_all).props(
+                    "outline no-caps"
+                ).mark("scenario-copy-all")
             ui.button("Fechar", on_click=dialog.close).props("flat no-caps")
     dialog.open()
 

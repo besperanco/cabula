@@ -508,6 +508,31 @@ async def test_scenario_copy_all_button_present(user: User) -> None:
     print('SCENARIO COPY-ALL BUTTON OK')
 
 
+async def test_scenario_step_command_is_editable(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    await user.should_see('Diagnosticar um pod que não arranca', retries=50)
+
+    scenarios = db.search_scenarios('pod que não arranca')
+    sc_id = scenarios[0]['id']
+    user.find(marker=f'scenario-view-{sc_id}').click()
+    await user.should_see(marker='scenario-step-command-1', retries=50)
+
+    step_input = next(iter(user.find(marker='scenario-step-command-1').elements))
+    original_value = step_input.value
+    step_input.value = 'kubectl get pods -n "producao"'
+    assert step_input.value != original_value, 'o campo devia ser editavel'
+
+    # editar no dialogo nao pode alterar o cenario guardado na bd
+    full = db.get_scenario(sc_id)
+    assert full['steps'][0]['command'] == original_value, 'editar no dialogo alterou o cenario guardado'
+
+    user.find(marker='scenario-copy-all').click()
+    print('SCENARIO STEP EDITABLE OK, edits stay local and do not persist to the saved scenario')
+
+
 async def test_theme_toggle(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)
