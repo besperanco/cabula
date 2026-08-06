@@ -733,7 +733,10 @@ def main_page():
                             render_home_item("scenario", sc)
 
                 def on_tab_change():
-                    if tabs.value == tab_favorites:
+                    # tabs.value e a string (nome) do separador ativo, nao o
+                    # elemento Tab em si — comparar com "Favoritos", nao com
+                    # tab_favorites.
+                    if tabs.value == "Favoritos":
                         refresh_home()
 
                 tabs.on_value_change(on_tab_change)

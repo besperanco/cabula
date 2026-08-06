@@ -161,8 +161,12 @@ async def test_favorite_command_appears_in_favorites_tab(user: User) -> None:
     await asyncio.sleep(0.2)
     assert db.get_command(cmd_id)['favorite'] == 1, 'comando nao ficou marcado como favorito na bd'
 
+    # nota: should_see por texto genérico nao chega aqui — o harness de
+    # testes ve texto de paineis inativos (mesmo painel "Comandos" continua
+    # com o cartao no DOM), por isso confirma-se um marcador exclusivo do
+    # separador Favoritos, que so existe se refresh_home() correu de facto
     user.find(marker='tab-favorites').click()
-    await user.should_see('systemctl restart', retries=50)
+    await user.should_see(marker=f'home-command-{cmd_id}', retries=50)
     print('FAVORITES OK, favorited command shows up on the Favoritos tab')
 
     # limpa o favorito para nao afetar outros testes que corram depois
