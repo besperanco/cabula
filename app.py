@@ -209,4 +209,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         window_size=(1100, 850) if native else None,
         reload=False,
         show=not native,
+        # modo nativo: deixa o NiceGUI escolher uma porta livre sozinho.
+        # modo browser (dev): porta fixa 8081, para não colidir com outras apps locais.
+        port=None if native else 8081,
     )
