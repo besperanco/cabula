@@ -475,3 +475,88 @@ def search_terms(query, category=None):
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+def export_data():
+    """Devolve um dict com todo o conteúdo (comandos, cenários com passos e
+    glossário), pronto a serializar em JSON — para backup ou para levar para
+    outra máquina."""
+    return {
+        "version": 1,
+        "exported_at": datetime.now().isoformat(),
+        "commands": [
+            {
+                "command": c["command"], "description": c["description"], "category": c["category"],
+                "tags": c["tags"], "example": c["example"], "notes": c["notes"], "favorite": bool(c["favorite"]),
+            }
+            for c in list_commands()
+        ],
+        "scenarios": [
+            {
+                "title": s["title"], "description": s["description"], "category": s["category"],
+                "favorite": bool(s["favorite"]),
+                "steps": [{"command": st["command"], "note": st["note"]} for st in get_scenario(s["id"])["steps"]],
+            }
+            for s in list_scenarios()
+        ],
+        "glossary": [
+            {"term": t["term"], "definition": t["definition"], "category": t["category"]}
+            for t in list_terms()
+        ],
+    }
+
+
+def import_data(data, replace=False):
+    """Importa comandos, cenários e termos do glossário a partir de um dict
+    no formato de `export_data`. Com `replace=True`, apaga primeiro tudo o
+    que já existe; caso contrário, adiciona o conteúdo do ficheiro ao que já
+    lá está. Devolve um dict com as contagens efetivamente importadas."""
+    if replace:
+        with _connect() as conn:
+            conn.execute("DELETE FROM scenario_steps")
+            conn.execute("DELETE FROM scenarios")
+            conn.execute("DELETE FROM commands")
+            conn.execute("DELETE FROM glossary")
+            conn.execute("DELETE FROM recent_access")
+
+    counts = {"commands": 0, "scenarios": 0, "glossary": 0}
+
+    for c in data.get("commands", []) or []:
+        command = (c.get("command") or "").strip()
+        description = (c.get("description") or "").strip()
+        if not command or not description:
+            continue
+        cmd_id = add_command(
+            command, description, c.get("category") or CATEGORIES[0],
+            (c.get("tags") or "").strip(), (c.get("example") or "").strip(), (c.get("notes") or "").strip(),
+        )
+        if c.get("favorite"):
+            toggle_command_favorite(cmd_id)
+        counts["commands"] += 1
+
+    for s in data.get("scenarios", []) or []:
+        title = (s.get("title") or "").strip()
+        if not title:
+            continue
+        scenario_id = add_scenario(
+            title, (s.get("description") or "").strip(), s.get("category") or SCENARIO_CATEGORIES[0]
+        )
+        steps = [
+            ((st.get("command") or "").strip(), (st.get("note") or "").strip())
+            for st in s.get("steps", []) or []
+            if (st.get("command") or "").strip() or (st.get("note") or "").strip()
+        ]
+        replace_steps(scenario_id, steps)
+        if s.get("favorite"):
+            toggle_scenario_favorite(scenario_id)
+        counts["scenarios"] += 1
+
+    for t in data.get("glossary", []) or []:
+        term = (t.get("term") or "").strip()
+        definition = (t.get("definition") or "").strip()
+        if not term or not definition:
+            continue
+        add_term(term, definition, t.get("category") or SCENARIO_CATEGORIES[0])
+        counts["glossary"] += 1
+
+    return counts

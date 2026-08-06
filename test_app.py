@@ -1,6 +1,11 @@
 import asyncio
+import json
 
 import db
+import seed_data
+import seed_glossary
+import seed_scenarios
+from nicegui.elements.upload_files import SmallFileUpload
 from nicegui.testing import User
 
 pytest_plugins = ['nicegui.testing.user_plugin']
@@ -216,6 +221,94 @@ async def test_copy_command_marks_it_recent(user: User) -> None:
         'comando copiado nao apareceu nos recentes na bd'
     )
     print('RECENTS OK, copied command tracked as recent')
+
+
+async def test_export_downloads_json_backup(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='export-data').click()
+    response = await user.download.next()
+    assert response.status_code == 200
+    data = response.json()
+    assert data['commands'], 'backup nao contem comandos'
+    assert data['scenarios'], 'backup nao contem cenarios'
+    assert data['glossary'], 'backup nao contem termos do glossario'
+    print('EXPORT OK, JSON backup contains commands/scenarios/glossary')
+
+
+async def test_import_merges_data_from_json(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    payload = {
+        "version": 1,
+        "commands": [{
+            "command": "echo-teste-import-xyz", "description": "comando de teste de importacao",
+            "category": "Linux", "tags": "", "example": "", "notes": "", "favorite": False,
+        }],
+        "scenarios": [],
+        "glossary": [],
+    }
+    content = json.dumps(payload).encode('utf-8')
+
+    user.find(marker='import-data').click()
+    await user.should_see('Importar dados', retries=50)
+
+    upload_element = next(iter(user.find(marker='import-upload').elements))
+    await upload_element.handle_uploads([
+        SmallFileUpload(name='backup.json', content_type='application/json', _data=content)
+    ])
+    await asyncio.sleep(0.3)
+
+    matches = db.search_commands('echo-teste-import-xyz')
+    assert len(matches) == 1, f'esperava 1 comando importado, veio {len(matches)}'
+    print('IMPORT OK, command from JSON added to db')
+
+    # limpa para nao afetar outros testes que corram depois
+    db.delete_command(matches[0]['id'])
+
+
+async def test_import_replace_wipes_existing_data(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    assert db.count_commands() > 0, 'esperava comandos ja seedados antes do teste'
+
+    payload = {
+        "version": 1,
+        "commands": [{
+            "command": "unico-comando-pos-substituicao", "description": "unico comando depois de substituir",
+            "category": "Linux", "tags": "", "example": "", "notes": "", "favorite": False,
+        }],
+        "scenarios": [],
+        "glossary": [],
+    }
+    content = json.dumps(payload).encode('utf-8')
+
+    user.find(marker='import-data').click()
+    await user.should_see('Importar dados', retries=50)
+    user.find(marker='import-replace').click()
+
+    upload_element = next(iter(user.find(marker='import-upload').elements))
+    await upload_element.handle_uploads([
+        SmallFileUpload(name='backup.json', content_type='application/json', _data=content)
+    ])
+    await asyncio.sleep(0.3)
+
+    assert db.count_commands() == 1, f'esperava 1 comando apos substituir, veio {db.count_commands()}'
+    assert db.count_scenarios() == 0
+    assert db.count_terms() == 0
+    print('IMPORT REPLACE OK, old data wiped and only the imported command remains')
+
+    # repõe os dados seedados (apagados pelo "substituir tudo" acima) para
+    # nao afetar outros testes que corram depois — seed() so insere quando a
+    # respetiva tabela esta vazia, por isso apaga-se primeiro o comando unico
+    # importado neste teste
+    db.delete_command(db.search_commands('unico-comando-pos-substituicao')[0]['id'])
+    seed_data.seed()
+    seed_scenarios.seed()
+    seed_glossary.seed()
 
 
 async def test_theme_toggle(user: User) -> None:

@@ -4,8 +4,10 @@ Aplicação NiceGUI totalmente local e portável: SQLite (cabula.db, ao lado
 deste ficheiro/executável) com pesquisa full-text, sem rede nem servidor.
 """
 
+import json
 import secrets
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from nicegui import app, context, ui
@@ -375,6 +377,56 @@ def confirm_delete_term_dialog(t, on_deleted=None):
     dialog.open()
 
 
+def do_export():
+    data = db.export_data()
+    # tem de ser bytes: ui.download() so reconhece conteudo bruto (em vez de
+    # o interpretar como caminho de ficheiro ou URL) quando recebe bytes
+    content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    filename = f'cabula-backup-{datetime.now().strftime("%Y%m%d-%H%M%S")}.json'
+    ui.download(content, filename=filename, media_type="application/json")
+    ui.notify("Ficheiro de backup gerado.", type="positive")
+
+
+def open_import_dialog(on_imported=None):
+    with context.client.content:
+        dialog = ui.dialog()
+    with dialog, ui.card().classes("w-full").style("min-width:480px"):
+        ui.label("Importar dados").classes("text-lg font-bold")
+        ui.label(
+            "Escolhe um ficheiro JSON exportado pela Cábula (backup anterior, ou "
+            "vindo de outra máquina)."
+        ).classes("text-sm opacity-70")
+        replace_checkbox = ui.checkbox(
+            "Substituir tudo (apaga comandos, cenários e glossário atuais antes de importar)"
+        ).mark("import-replace")
+
+        result_label = ui.label("")
+
+        async def handle_upload(e):
+            try:
+                data = await e.file.json()
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                result_label.classes(add="text-negative", remove="text-positive")
+                result_label.set_text("Ficheiro inválido — tem de ser um JSON exportado pela Cábula.")
+                return
+            counts = db.import_data(data, replace=replace_checkbox.value)
+            result_label.classes(add="text-positive", remove="text-negative")
+            result_label.set_text(
+                f'Importado: {counts["commands"]} comando(s), {counts["scenarios"]} cenário(s), '
+                f'{counts["glossary"]} termo(s).'
+            )
+            ui.notify("Importação concluída!", type="positive")
+            if on_imported:
+                on_imported()
+
+        ui.upload(on_upload=handle_upload, auto_upload=True).props("accept=.json").classes("w-full").mark(
+            "import-upload"
+        )
+
+        ui.button("Fechar", on_click=dialog.close).props("flat no-caps mt-2")
+    dialog.open()
+
+
 @ui.page("/")
 def main_page():
     state = {
@@ -390,6 +442,12 @@ def main_page():
         ui.label("Cábula").classes("text-xl font-bold")
         ui.label("Linux · Kubernetes · OpenStack").classes("text-sm opacity-80")
         ui.space()
+        ui.button(icon="file_download", on_click=do_export).props("flat round dense color=white").tooltip(
+            "Exportar tudo para JSON (backup)"
+        ).mark("export-data")
+        ui.button(
+            icon="file_upload", on_click=lambda: open_import_dialog(on_imported=lambda: refresh_all())
+        ).props("flat round dense color=white").tooltip("Importar de um JSON").mark("import-data")
         add_theme_toggle(dark, classes="text-white")
 
     with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-3"):
@@ -764,6 +822,12 @@ def main_page():
                 tabs.on_value_change(on_tab_change)
 
                 refresh_home()
+
+        def refresh_all():
+            refresh()
+            refresh_scenarios()
+            refresh_glossary()
+            refresh_home()
 
 
 if __name__ in {"__main__", "__mp_main__"}:
