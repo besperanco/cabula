@@ -9,6 +9,8 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -105,21 +107,55 @@ def category_icon(category):
     return CATEGORY_ICONS.get(category, "code")
 
 
+def _windows_path_to_wsl(path):
+    """Converte um caminho Windows (ex: C:\\Users\\...) para o equivalente
+    dentro do WSL (ex: /mnt/c/Users/...)."""
+    p = Path(path).resolve()
+    drive = p.drive.rstrip(":").lower()
+    rest = str(p)[len(p.drive):].replace("\\", "/")
+    return f"/mnt/{drive}{rest}"
+
+
+def _pick_wsl_distro():
+    """Escolhe uma distro WSL real para abrir, evitando as instâncias
+    internas do Docker Desktop ("docker-desktop", "docker-desktop-data"),
+    que não servem para uma shell interativa — em máquinas com o Docker
+    Desktop instalado, uma dessas costuma ficar como distro por omissão do
+    WSL, o que faria abrir o sítio errado sem se notar."""
+    try:
+        result = subprocess.run(["wsl.exe", "-l", "-q"], capture_output=True, timeout=5, check=False)
+        # a saida do wsl.exe vem em UTF-16LE quando redirecionada (nao e um
+        # console real)
+        names = [n.strip() for n in result.stdout.decode("utf-16-le", errors="ignore").splitlines() if n.strip()]
+        candidates = [n for n in names if not n.lower().startswith("docker-desktop")]
+        return candidates[0] if candidates else (names[0] if names else None)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 def open_in_wsl(command_text):
     """Abre uma janela nova (Windows Terminal, se existir; senão o WSL
     diretamente) já a correr `command_text`, e deixa a shell aberta a
     seguir — mostra sempre o que vai correr antes de correr, tal como
     colar manualmente. Só faz sentido quando a app corre localmente no
-    Windows (é sempre o caso: é a única forma como a Cábula é usada)."""
-    inner = f"{command_text}; exec bash"
-    wt_path = shutil.which("wt.exe") or shutil.which("wt")
+    Windows (é sempre o caso: é a única forma como a Cábula é usada).
+
+    O comando é escrito num script temporário em vez de ir direto na linha
+    de comandos: o Windows Terminal reinterpreta ";" como separador dos
+    seus próprios subcomandos (mesmo dentro de um argumento entre aspas),
+    o que partia comandos com ";" a meio."""
     try:
-        if wt_path:
-            subprocess.Popen([wt_path, "wsl.exe", "-e", "bash", "-ic", inner])
-        else:
-            subprocess.Popen(["wsl.exe", "-e", "bash", "-ic", inner])
+        script_path = Path(tempfile.gettempdir()) / f"cabula_wsl_{uuid.uuid4().hex}.sh"
+        script_path.write_text(
+            f'rm -f "$0"\n{command_text}\nexec bash\n', encoding="utf-8", newline="\n",
+        )
+        wsl_script_path = _windows_path_to_wsl(script_path)
+        distro = _pick_wsl_distro()
+        args = ["wsl.exe"] + (["-d", distro] if distro else []) + ["-e", "bash", wsl_script_path]
+        wt_path = shutil.which("wt.exe") or shutil.which("wt")
+        subprocess.Popen([wt_path, *args] if wt_path else args)
         ui.notify("A abrir no WSL...", type="positive")
-    except (FileNotFoundError, OSError):
+    except OSError:
         ui.notify("Não foi possível abrir o WSL — confirma se está instalado.", type="negative")
 
 
