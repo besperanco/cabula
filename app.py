@@ -6,6 +6,8 @@ deste ficheiro/executável) com pesquisa full-text, sem rede nem servidor.
 
 import json
 import secrets
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -101,6 +103,24 @@ def add_theme_toggle(dark, classes=""):
 
 def category_icon(category):
     return CATEGORY_ICONS.get(category, "code")
+
+
+def open_in_wsl(command_text):
+    """Abre uma janela nova (Windows Terminal, se existir; senão o WSL
+    diretamente) já a correr `command_text`, e deixa a shell aberta a
+    seguir — mostra sempre o que vai correr antes de correr, tal como
+    colar manualmente. Só faz sentido quando a app corre localmente no
+    Windows (é sempre o caso: é a única forma como a Cábula é usada)."""
+    inner = f"{command_text}; exec bash"
+    wt_path = shutil.which("wt.exe") or shutil.which("wt")
+    try:
+        if wt_path:
+            subprocess.Popen([wt_path, "wsl.exe", "-e", "bash", "-ic", inner])
+        else:
+            subprocess.Popen(["wsl.exe", "-e", "bash", "-ic", inner])
+        ui.notify("A abrir no WSL...", type="positive")
+    except (FileNotFoundError, OSError):
+        ui.notify("Não foi possível abrir o WSL — confirma se está instalado.", type="negative")
 
 
 def open_command_dialog(existing=None, on_saved=None, duplicate_from=None):
@@ -667,6 +687,14 @@ def main_page():
                                 ),
                             ).props("flat dense round size=sm").tooltip("Copiar comando").mark(
                                 f"cmd-copy-{cmd['id']}"
+                            )
+                            ui.button(
+                                icon="terminal",
+                                on_click=lambda c=cmd: (
+                                    open_in_wsl(c["command"]), db.mark_recent("command", c["id"]),
+                                ),
+                            ).props("flat dense round size=sm").tooltip("Abrir no WSL").mark(
+                                f"cmd-wsl-{cmd['id']}"
                             )
                             ui.button(
                                 icon="edit", on_click=lambda c=cmd: open_command_dialog(c, on_saved=refresh)

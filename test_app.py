@@ -155,6 +155,26 @@ async def test_duplicate_command(user: User) -> None:
     db.delete_command(new_one['id'])
 
 
+async def test_open_in_wsl_button_present_and_does_not_crash(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='search-input').type('systemctl status')
+    await user.should_see('systemctl status', retries=50)
+
+    matches = db.search_commands('systemctl status')
+    assert len(matches) == 1, f'esperava 1 resultado, veio {len(matches)}'
+    cmd_id = matches[0]['id']
+
+    user.find(marker=f'cmd-wsl-{cmd_id}').click()
+    await asyncio.sleep(0.3)
+    # no ambiente de testes nao ha wt.exe/wsl.exe -- confirma so que o
+    # clique nao rebenta a app e que aparece alguma notificacao (sucesso ou
+    # o aviso de "nao encontrado")
+    assert user.notify.messages, 'esperava alguma notificacao ao clicar em Abrir no WSL'
+    print('OPEN IN WSL BUTTON OK (no crash)')
+
+
 async def test_rename_tag_merges(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)
