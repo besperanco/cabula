@@ -9,3 +9,4 @@ dist/
 cabula.db
 .storage_secret
 run.log
+.nicegui/
