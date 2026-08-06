@@ -345,19 +345,30 @@ def toggle_scenario_favorite(scenario_id):
     return bool(new_value)
 
 
-def list_favorite_commands():
+def list_favorite_commands(category=None):
+    sql = "SELECT * FROM commands WHERE favorite = 1"
+    params = []
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    sql += " ORDER BY command"
     with _connect() as conn:
-        rows = conn.execute("SELECT * FROM commands WHERE favorite = 1 ORDER BY command").fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
-def list_favorite_scenarios():
+def list_favorite_scenarios(category=None):
     sql = (
         "SELECT s.*, (SELECT COUNT(*) FROM scenario_steps st WHERE st.scenario_id = s.id) AS step_count "
-        "FROM scenarios s WHERE s.favorite = 1 ORDER BY s.title"
+        "FROM scenarios s WHERE s.favorite = 1"
     )
+    params = []
+    if category:
+        sql += " AND s.category = ?"
+        params.append(category)
+    sql += " ORDER BY s.title"
     with _connect() as conn:
-        rows = conn.execute(sql).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -370,23 +381,30 @@ def mark_recent(item_type, item_id):
         )
 
 
-def list_recent(limit=8):
+def list_recent(limit=8, category=None):
     """Devolve os itens (comandos e cenários) acedidos mais recentemente, já
     com os dados completos, como tuplos (item_type, dict), mais recentes
-    primeiro. Ignora silenciosamente entradas cujo item já foi apagado."""
+    primeiro. Ignora silenciosamente entradas cujo item já foi apagado.
+
+    Com `category`, percorre mais histórico do que `limit` antes de filtrar,
+    para conseguir preencher `limit` resultados dessa categoria mesmo que
+    haja itens de outras categorias mais recentes pelo meio."""
+    fetch_limit = max(limit * 4, 30) if category else limit
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT item_type, item_id FROM recent_access ORDER BY accessed_at DESC LIMIT ?", (limit,)
+            "SELECT item_type, item_id FROM recent_access ORDER BY accessed_at DESC LIMIT ?", (fetch_limit,)
         ).fetchall()
         items = []
         for r in rows:
+            if len(items) >= limit:
+                break
             if r["item_type"] == "command":
                 cmd_row = conn.execute("SELECT * FROM commands WHERE id = ?", (r["item_id"],)).fetchone()
-                if cmd_row:
+                if cmd_row and (not category or cmd_row["category"] == category):
                     items.append(("command", dict(cmd_row)))
             else:
                 sc_row = conn.execute("SELECT * FROM scenarios WHERE id = ?", (r["item_id"],)).fetchone()
-                if sc_row:
+                if sc_row and (not category or sc_row["category"] == category):
                     step_count = conn.execute(
                         "SELECT COUNT(*) FROM scenario_steps WHERE scenario_id = ?", (r["item_id"],)
                     ).fetchone()[0]

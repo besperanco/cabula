@@ -173,6 +173,30 @@ async def test_favorite_command_appears_in_favorites_tab(user: User) -> None:
     db.toggle_command_favorite(cmd_id)
 
 
+async def test_favorites_category_filter(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    all_commands = db.list_commands()
+    linux_id = next(c['id'] for c in all_commands if c['command'] == 'systemctl restart')
+    k8s_id = next(c['id'] for c in all_commands if c['command'] == 'kubectl get pods')
+    db.toggle_command_favorite(linux_id)
+    db.toggle_command_favorite(k8s_id)
+
+    user.find(marker='tab-favorites').click()
+    await user.should_see(marker=f'home-command-{linux_id}', retries=50)
+    await user.should_see(marker=f'home-command-{k8s_id}', retries=50)
+
+    user.find(marker='favorites-filter-Linux').click()
+    await user.should_see(marker=f'home-command-{linux_id}', retries=50)
+    await user.should_not_see(marker=f'home-command-{k8s_id}', retries=10)
+    print('FAVORITES CATEGORY FILTER OK, only Linux favorite shown')
+
+    # limpa os favoritos para nao afetar outros testes que corram depois
+    db.toggle_command_favorite(linux_id)
+    db.toggle_command_favorite(k8s_id)
+
+
 async def test_copy_command_marks_it_recent(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)

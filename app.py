@@ -381,6 +381,7 @@ def main_page():
         "query": "", "category": None,
         "scenario_query": "", "scenario_category": None,
         "glossary_query": "", "glossary_category": None,
+        "favorites_category": None,
     }
     dark = apply_theme()
 
@@ -651,6 +652,9 @@ def main_page():
                 refresh_glossary()
 
             with ui.tab_panel(tab_favorites).classes("gap-3"):
+                with ui.row().classes("gap-2") as favorites_category_row:
+                    pass
+
                 ui.label("Recentes").classes("font-bold text-sm opacity-70")
                 recent_container = ui.column().classes("w-full gap-2")
 
@@ -707,30 +711,48 @@ def main_page():
                                 ui.label(item["description"]).classes("text-sm mt-1 opacity-80")
 
                 def refresh_home():
+                    cat = state["favorites_category"]
                     recent_container.clear()
                     favorites_container.clear()
 
-                    recents = db.list_recent(limit=8)
+                    recents = db.list_recent(limit=8, category=cat)
                     with recent_container:
                         if not recents:
                             ui.label(
-                                "Ainda sem itens recentes — copia um comando ou abre um "
-                                "cenário para aparecer aqui."
+                                "Ainda sem itens recentes nesta categoria — copia um comando "
+                                "ou abre um cenário para aparecer aqui."
                             ).classes("opacity-60 text-sm p-2")
                         for kind, item in recents:
                             render_home_item(kind, item)
 
-                    fav_commands = db.list_favorite_commands()
-                    fav_scenarios = db.list_favorite_scenarios()
+                    fav_commands = db.list_favorite_commands(cat)
+                    fav_scenarios = db.list_favorite_scenarios(cat)
                     with favorites_container:
                         if not fav_commands and not fav_scenarios:
                             ui.label(
-                                "Ainda sem favoritos — marca comandos ou cenários com a estrela."
+                                "Ainda sem favoritos nesta categoria — marca comandos ou "
+                                "cenários com a estrela."
                             ).classes("opacity-60 text-sm p-2")
                         for cmd in fav_commands:
                             render_home_item("command", cmd)
                         for sc in fav_scenarios:
                             render_home_item("scenario", sc)
+
+                def set_favorites_category(cat):
+                    state["favorites_category"] = cat
+                    for c, btn in favorites_category_buttons.items():
+                        btn.props(f"{'unelevated' if c == cat else 'flat'}")
+                    refresh_home()
+
+                favorites_category_buttons = {}
+                with favorites_category_row:
+                    favorites_category_buttons[None] = ui.button(
+                        "Todos", on_click=lambda: set_favorites_category(None)
+                    ).props("unelevated dense no-caps").mark("favorites-filter-Todos")
+                    for cat in db.SCENARIO_CATEGORIES:
+                        favorites_category_buttons[cat] = ui.button(
+                            cat, icon=category_icon(cat), on_click=lambda c=cat: set_favorites_category(c)
+                        ).props("flat dense no-caps").mark(f"favorites-filter-{cat}")
 
                 def on_tab_change():
                     # tabs.value e a string (nome) do separador ativo, nao o
