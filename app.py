@@ -198,7 +198,7 @@ def open_scenario_detail(sc):
     with context.client.content:
         dialog = ui.dialog()
     command_inputs = []
-    with dialog, ui.card().classes("w-full").style("min-width:600px"):
+    with dialog, ui.card().classes("w-full").style("min-width:600px; width:800px; max-width:95vw"):
         ui.label(full["title"]).classes("text-lg font-bold")
         if full["description"]:
             ui.label(full["description"]).classes("text-sm opacity-70 mb-2")
@@ -212,9 +212,9 @@ def open_scenario_detail(sc):
                 with ui.column().classes("gap-0 flex-grow"):
                     if step["command"]:
                         with ui.row().classes("items-center gap-1"):
-                            cmd_input = ui.input(value=step["command"]).classes(
+                            cmd_input = ui.textarea(value=step["command"]).classes(
                                 "flex-grow font-mono text-sm"
-                            ).props("outlined dense").mark(f"scenario-step-command-{i}")
+                            ).props("outlined dense autogrow rows=1").mark(f"scenario-step-command-{i}")
                             command_inputs.append(cmd_input)
                             ui.button(
                                 icon="content_copy",
