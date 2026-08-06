@@ -4,9 +4,11 @@ Aplicação NiceGUI totalmente local e portável: SQLite (cabula.db, ao lado
 deste ficheiro/executável) com pesquisa full-text, sem rede nem servidor.
 """
 
+import secrets
 import sys
+from pathlib import Path
 
-from nicegui import context, ui
+from nicegui import app, context, ui
 
 import db
 import seed_data
@@ -18,6 +20,57 @@ CATEGORY_ICONS = {
     "Kubernetes": "hub",
     "OpenStack": "cloud",
 }
+
+# mesma paleta de marca e mesmo mecanismo de tema (persistido por browser)
+# do Monitor de ETFs.
+BRAND_PRIMARY = "#2a78d6"
+BRAND_SECONDARY = "#52514e"
+BRAND_ACCENT = "#1baf7a"
+BRAND_POSITIVE = "#0ca30c"
+BRAND_NEGATIVE = "#d03b3b"
+BRAND_WARNING = "#c98500"
+
+STORAGE_SECRET_FILE = Path(__file__).parent / ".storage_secret"
+
+
+def _get_storage_secret():
+    if STORAGE_SECRET_FILE.exists():
+        return STORAGE_SECRET_FILE.read_text().strip()
+    secret = secrets.token_hex(32)
+    STORAGE_SECRET_FILE.write_text(secret)
+    return secret
+
+
+def apply_theme():
+    ui.colors(
+        primary=BRAND_PRIMARY,
+        secondary=BRAND_SECONDARY,
+        accent=BRAND_ACCENT,
+        positive=BRAND_POSITIVE,
+        negative=BRAND_NEGATIVE,
+        warning=BRAND_WARNING,
+        dark="#1a1a19",
+        dark_page="#0d0d0d",
+    )
+    dark_pref = app.storage.user.get("dark_mode")
+    if dark_pref is None:
+        dark_pref = False
+        app.storage.user["dark_mode"] = dark_pref
+    return ui.dark_mode(value=dark_pref)
+
+
+def add_theme_toggle(dark, classes=""):
+    def toggle():
+        new_value = not bool(dark.value)
+        dark.value = new_value
+        app.storage.user["dark_mode"] = new_value
+        btn.props(f"icon={'light_mode' if new_value else 'dark_mode'}")
+
+    btn = ui.button(icon="light_mode" if dark.value else "dark_mode", on_click=toggle).props(
+        "flat round dense"
+    ).classes(classes).mark("theme-toggle")
+    btn.tooltip("Alternar tema claro/escuro")
+    return btn
 
 
 def category_icon(category):
@@ -112,11 +165,14 @@ def confirm_delete_dialog(cmd, on_deleted=None):
 @ui.page("/")
 def main_page():
     state = {"query": "", "category": None}
+    dark = apply_theme()
 
     with ui.row().classes("w-full items-center gap-2 px-4 py-3 bg-primary text-white"):
         ui.icon("menu_book").classes("text-2xl")
         ui.label("Cábula").classes("text-xl font-bold")
         ui.label("Linux · Kubernetes · OpenStack").classes("text-sm opacity-80")
+        ui.space()
+        add_theme_toggle(dark, classes="text-white")
 
     with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-3"):
         with ui.row().classes("w-full items-center gap-2"):
@@ -212,4 +268,5 @@ if __name__ in {"__main__", "__mp_main__"}:
         # modo nativo: deixa o NiceGUI escolher uma porta livre sozinho.
         # modo browser (dev): porta fixa 8081, para não colidir com outras apps locais.
         port=None if native else 8081,
+        storage_secret=_get_storage_secret(),
     )

@@ -7,3 +7,5 @@ build/
 dist/
 *.spec
 cabula.db
+.storage_secret
+run.log

@@ -65,3 +65,16 @@ async def test_add_edit_delete_command(user: User) -> None:
         await asyncio.sleep(0.05)
     assert db.get_command(cmd_id) is None, 'comando ainda existe na bd apos apagar'
     print('DELETE OK')
+
+
+async def test_theme_toggle(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    toggle = next(iter(user.find(marker='theme-toggle').elements))
+    assert toggle._props.get('icon') == 'dark_mode', 'esperava icone dark_mode por omissao (tema claro)'
+
+    user.find(marker='theme-toggle').click()
+    await asyncio.sleep(0.2)
+    assert toggle._props.get('icon') == 'light_mode', 'icone nao mudou para light_mode apos o clique'
+    print('THEME TOGGLE OK')
