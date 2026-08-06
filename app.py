@@ -4,7 +4,7 @@ Aplicação NiceGUI totalmente local e portável: SQLite (cabula.db, ao lado
 deste ficheiro/executável) com pesquisa full-text, sem rede nem servidor.
 """
 
-import os
+import sys
 
 from nicegui import context, ui
 
@@ -199,7 +199,10 @@ def main_page():
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    native = os.environ.get("CABULA_NATIVE", "0") == "1"
+    # modo nativo (janela própria) quando corre como executável empacotado
+    # (PyInstaller define sys.frozen); em desenvolvimento (`python app.py`)
+    # fica em modo browser, mais fácil de testar.
+    native = getattr(sys, "frozen", False)
     ui.run(
         title="Cábula",
         native=native,
