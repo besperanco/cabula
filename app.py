@@ -12,10 +12,12 @@ from nicegui import app, context, ui
 
 import db
 import seed_data
+import seed_glossary
 import seed_scenarios
 
 seed_data.seed()
 seed_scenarios.seed()
+seed_glossary.seed()
 
 CATEGORY_ICONS = {
     "Linux": "terminal",
@@ -168,6 +170,7 @@ def confirm_delete_dialog(cmd, on_deleted=None):
 def open_scenario_detail(sc):
     """Mostra os passos ordenados de um cenário, cada um com o comando
     (copiável) e a nota que explica porque é que esse passo existe."""
+    db.mark_recent("scenario", sc["id"])
     full = db.get_scenario(sc["id"])
     with context.client.content:
         dialog = ui.dialog()
@@ -307,9 +310,78 @@ def confirm_delete_scenario_dialog(sc, on_deleted=None):
     dialog.open()
 
 
+def open_term_dialog(existing=None, on_saved=None):
+    """Diálogo de adicionar/editar um termo do glossário. `existing`: dict
+    do termo a editar, ou None para criar um novo."""
+    with context.client.content:
+        dialog = ui.dialog()
+    with dialog, ui.card().classes("w-full").style("min-width:520px"):
+        ui.label("Editar termo" if existing else "Novo termo").classes("text-lg font-bold")
+
+        term_input = ui.input(label="Termo").classes("w-full").props("outlined dense").mark("term-input")
+        category_select = ui.select(
+            db.SCENARIO_CATEGORIES, label="Categoria", value=db.SCENARIO_CATEGORIES[0]
+        ).classes("w-full").props("outlined dense")
+        definition_input = ui.textarea(label="Definição").classes("w-full").props(
+            "outlined dense autogrow"
+        ).mark("term-definition")
+
+        if existing:
+            term_input.value = existing["term"]
+            category_select.value = existing["category"]
+            definition_input.value = existing["definition"]
+
+        error_label = ui.label("").classes("text-negative text-sm")
+
+        def save():
+            term = (term_input.value or "").strip()
+            definition = (definition_input.value or "").strip()
+            if not term:
+                error_label.set_text("Indica o termo.")
+                return
+            if not definition:
+                error_label.set_text("Indica uma definição.")
+                return
+            if existing:
+                db.update_term(existing["id"], term, definition, category_select.value)
+            else:
+                db.add_term(term, definition, category_select.value)
+            dialog.close()
+            if on_saved:
+                on_saved()
+
+        with ui.row().classes("mt-2"):
+            ui.button("Guardar", on_click=save).props("unelevated no-caps").mark("term-save")
+            ui.button("Cancelar", on_click=dialog.close).props("flat no-caps")
+    dialog.open()
+
+
+def confirm_delete_term_dialog(t, on_deleted=None):
+    with context.client.content:
+        dialog = ui.dialog()
+    with dialog, ui.card():
+        ui.label(f'Apagar "{t["term"]}"?').classes("font-bold")
+        ui.label("Esta ação não pode ser desfeita.").classes("text-sm opacity-60")
+
+        def do_delete():
+            db.delete_term(t["id"])
+            dialog.close()
+            if on_deleted:
+                on_deleted()
+
+        with ui.row().classes("mt-2"):
+            ui.button("Apagar", on_click=do_delete).props("color=negative no-caps").mark("confirm-delete-term")
+            ui.button("Cancelar", on_click=dialog.close).props("flat no-caps")
+    dialog.open()
+
+
 @ui.page("/")
 def main_page():
-    state = {"query": "", "category": None, "scenario_query": "", "scenario_category": None}
+    state = {
+        "query": "", "category": None,
+        "scenario_query": "", "scenario_category": None,
+        "glossary_query": "", "glossary_category": None,
+    }
     dark = apply_theme()
 
     with ui.row().classes("w-full items-center gap-2 px-4 py-3 bg-primary text-white"):
@@ -323,6 +395,8 @@ def main_page():
         with ui.tabs().classes("w-full") as tabs:
             tab_commands = ui.tab("Comandos", icon="terminal").mark("tab-commands")
             tab_scenarios = ui.tab("Cenários", icon="route").mark("tab-scenarios")
+            tab_glossary = ui.tab("Glossário", icon="menu_book").mark("tab-glossary")
+            tab_favorites = ui.tab("Favoritos", icon="star").mark("tab-favorites")
 
         with ui.tab_panels(tabs, value=tab_commands).classes("w-full"):
             with ui.tab_panel(tab_commands).classes("gap-3"):
@@ -351,9 +425,14 @@ def main_page():
                             ui.badge(cmd["category"]).props("color=primary outline")
                             ui.space()
                             ui.button(
+                                icon="star" if cmd["favorite"] else "star_border",
+                                on_click=lambda c=cmd: (db.toggle_command_favorite(c["id"]), refresh()),
+                            ).props("flat dense round size=sm").tooltip("Favorito").mark(f"cmd-fav-{cmd['id']}")
+                            ui.button(
                                 icon="content_copy",
                                 on_click=lambda c=cmd: (
-                                    ui.clipboard.write(c["command"]), ui.notify("Comando copiado!")
+                                    ui.clipboard.write(c["command"]), ui.notify("Comando copiado!"),
+                                    db.mark_recent("command", c["id"]),
                                 ),
                             ).props("flat dense round size=sm").tooltip("Copiar comando").mark(
                                 f"cmd-copy-{cmd['id']}"
@@ -436,6 +515,12 @@ def main_page():
                             ui.label(f'{sc["step_count"]} passos').classes("text-xs opacity-60")
                             ui.space()
                             ui.button(
+                                icon="star" if sc["favorite"] else "star_border",
+                                on_click=lambda s=sc: (db.toggle_scenario_favorite(s["id"]), refresh_scenarios()),
+                            ).props("flat dense round size=sm").tooltip("Favorito").mark(
+                                f"scenario-fav-{sc['id']}"
+                            )
+                            ui.button(
                                 icon="visibility", on_click=lambda s=sc: open_scenario_detail(s)
                             ).props("flat dense round size=sm").tooltip("Ver passos").mark(
                                 f"scenario-view-{sc['id']}"
@@ -494,6 +579,166 @@ def main_page():
                 scenario_search_input.on_value_change(on_scenario_search_change)
 
                 refresh_scenarios()
+
+            with ui.tab_panel(tab_glossary).classes("gap-3"):
+                with ui.row().classes("w-full items-center gap-2"):
+                    glossary_search_input = (
+                        ui.input(placeholder='Pesquisa conceitos — ex: "pod", "tenant", "flavor"...')
+                        .classes("flex-grow")
+                        .props("outlined dense clearable debounce=150")
+                        .mark("glossary-search-input")
+                    )
+                    ui.button(
+                        "Novo termo", icon="add", on_click=lambda: open_term_dialog(on_saved=refresh_glossary)
+                    ).props("unelevated no-caps").mark("new-term")
+
+                with ui.row().classes("gap-2") as glossary_category_row:
+                    pass
+
+                glossary_count_label = ui.label("").classes("text-xs opacity-60")
+                glossary_results_container = ui.column().classes("w-full gap-2")
+
+                def render_term_card(t):
+                    with ui.card().classes("w-full p-3"):
+                        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                            ui.icon(category_icon(t["category"])).classes("text-lg opacity-70")
+                            ui.label(t["term"]).classes("font-bold text-base")
+                            ui.badge(t["category"]).props("color=primary outline")
+                            ui.space()
+                            ui.button(
+                                icon="edit", on_click=lambda x=t: open_term_dialog(x, on_saved=refresh_glossary)
+                            ).props("flat dense round size=sm").tooltip("Editar").mark(f"term-edit-{t['id']}")
+                            ui.button(
+                                icon="delete",
+                                on_click=lambda x=t: confirm_delete_term_dialog(x, on_deleted=refresh_glossary),
+                            ).props("flat dense round size=sm").tooltip("Apagar").mark(f"term-delete-{t['id']}")
+                        ui.label(t["definition"]).classes("text-sm mt-1")
+
+                def refresh_glossary():
+                    glossary_results_container.clear()
+                    results = db.search_terms(state["glossary_query"], state["glossary_category"])
+                    glossary_count_label.set_text(f"{len(results)} termo(s)")
+                    with glossary_results_container:
+                        if not results:
+                            ui.label("Sem resultados. Tenta outra palavra, ou adiciona este termo.").classes(
+                                "opacity-60 text-sm p-4"
+                            )
+                        for t in results:
+                            render_term_card(t)
+
+                def set_glossary_category(cat):
+                    state["glossary_category"] = cat
+                    for c, btn in glossary_category_buttons.items():
+                        btn.props(f"{'unelevated' if c == cat else 'flat'}")
+                    refresh_glossary()
+
+                glossary_category_buttons = {}
+                with glossary_category_row:
+                    glossary_category_buttons[None] = ui.button(
+                        "Todos", on_click=lambda: set_glossary_category(None)
+                    ).props("unelevated dense no-caps").mark("glossary-filter-Todos")
+                    for cat in db.SCENARIO_CATEGORIES:
+                        glossary_category_buttons[cat] = ui.button(
+                            cat, icon=category_icon(cat), on_click=lambda c=cat: set_glossary_category(c)
+                        ).props("flat dense no-caps").mark(f"glossary-filter-{cat}")
+
+                def on_glossary_search_change(e):
+                    state["glossary_query"] = e.value or ""
+                    refresh_glossary()
+
+                glossary_search_input.on_value_change(on_glossary_search_change)
+
+                refresh_glossary()
+
+            with ui.tab_panel(tab_favorites).classes("gap-3"):
+                ui.label("Recentes").classes("font-bold text-sm opacity-70")
+                recent_container = ui.column().classes("w-full gap-2")
+
+                ui.label("Favoritos").classes("font-bold text-sm opacity-70 mt-3")
+                favorites_container = ui.column().classes("w-full gap-2")
+
+                def render_home_item(kind, item):
+                    if kind == "command":
+                        with ui.card().classes("w-full p-3").mark(f"home-command-{item['id']}"):
+                            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                                ui.icon(category_icon(item["category"])).classes("text-lg opacity-70")
+                                ui.label(item["command"]).classes("font-mono font-bold text-base")
+                                ui.badge(item["category"]).props("color=primary outline")
+                                ui.space()
+                                ui.button(
+                                    icon="star" if item["favorite"] else "star_border",
+                                    on_click=lambda c=item: (
+                                        db.toggle_command_favorite(c["id"]), refresh_home()
+                                    ),
+                                ).props("flat dense round size=sm").tooltip("Favorito").mark(
+                                    f"home-cmd-fav-{item['id']}"
+                                )
+                                ui.button(
+                                    icon="content_copy",
+                                    on_click=lambda c=item: (
+                                        ui.clipboard.write(c["command"]), ui.notify("Comando copiado!"),
+                                        db.mark_recent("command", c["id"]), refresh_home(),
+                                    ),
+                                ).props("flat dense round size=sm").tooltip("Copiar comando").mark(
+                                    f"home-cmd-copy-{item['id']}"
+                                )
+                            ui.label(item["description"]).classes("text-sm mt-1")
+                    else:
+                        with ui.card().classes("w-full p-3").mark(f"home-scenario-{item['id']}"):
+                            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                                ui.icon(category_icon(item["category"])).classes("text-lg opacity-70")
+                                ui.label(item["title"]).classes("font-bold text-base")
+                                ui.badge(item["category"]).props("color=primary outline")
+                                ui.space()
+                                ui.button(
+                                    icon="star" if item["favorite"] else "star_border",
+                                    on_click=lambda s=item: (
+                                        db.toggle_scenario_favorite(s["id"]), refresh_home()
+                                    ),
+                                ).props("flat dense round size=sm").tooltip("Favorito").mark(
+                                    f"home-scenario-fav-{item['id']}"
+                                )
+                                ui.button(
+                                    icon="visibility", on_click=lambda s=item: open_scenario_detail(s)
+                                ).props("flat dense round size=sm").tooltip("Ver passos").mark(
+                                    f"home-scenario-view-{item['id']}"
+                                )
+                            if item["description"]:
+                                ui.label(item["description"]).classes("text-sm mt-1 opacity-80")
+
+                def refresh_home():
+                    recent_container.clear()
+                    favorites_container.clear()
+
+                    recents = db.list_recent(limit=8)
+                    with recent_container:
+                        if not recents:
+                            ui.label(
+                                "Ainda sem itens recentes — copia um comando ou abre um "
+                                "cenário para aparecer aqui."
+                            ).classes("opacity-60 text-sm p-2")
+                        for kind, item in recents:
+                            render_home_item(kind, item)
+
+                    fav_commands = db.list_favorite_commands()
+                    fav_scenarios = db.list_favorite_scenarios()
+                    with favorites_container:
+                        if not fav_commands and not fav_scenarios:
+                            ui.label(
+                                "Ainda sem favoritos — marca comandos ou cenários com a estrela."
+                            ).classes("opacity-60 text-sm p-2")
+                        for cmd in fav_commands:
+                            render_home_item("command", cmd)
+                        for sc in fav_scenarios:
+                            render_home_item("scenario", sc)
+
+                def on_tab_change():
+                    if tabs.value == tab_favorites:
+                        refresh_home()
+
+                tabs.on_value_change(on_tab_change)
+
+                refresh_home()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

@@ -125,6 +125,71 @@ async def test_add_edit_delete_scenario(user: User) -> None:
     print('SCENARIO DELETE OK')
 
 
+async def test_glossary_tab_lists_seeded_terms(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-glossary').click()
+    await user.should_see('Pod', retries=50)
+    print('GLOSSARY TAB OK, seeded term visible')
+
+
+async def test_glossary_search_by_definition(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-glossary').click()
+    await user.should_see('Glossário', retries=50)
+
+    user.find(marker='glossary-search-input').type('tamanho pré-definido')
+    await user.should_see('Flavor', retries=50)
+    print('GLOSSARY SEARCH OK (found Flavor via its definition)')
+
+
+async def test_favorite_command_appears_in_favorites_tab(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='search-input').type('systemctl restart')
+    await user.should_see('systemctl restart', retries=50)
+
+    matches = db.search_commands('systemctl restart')
+    assert len(matches) == 1, f'esperava 1 resultado, veio {len(matches)}'
+    cmd_id = matches[0]['id']
+
+    user.find(marker=f'cmd-fav-{cmd_id}').click()
+    await asyncio.sleep(0.2)
+    assert db.get_command(cmd_id)['favorite'] == 1, 'comando nao ficou marcado como favorito na bd'
+
+    user.find(marker='tab-favorites').click()
+    await user.should_see('systemctl restart', retries=50)
+    print('FAVORITES OK, favorited command shows up on the Favoritos tab')
+
+    # limpa o favorito para nao afetar outros testes que corram depois
+    db.toggle_command_favorite(cmd_id)
+
+
+async def test_copy_command_marks_it_recent(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='search-input').type('systemctl status')
+    await user.should_see('systemctl status', retries=50)
+
+    matches = db.search_commands('systemctl status')
+    assert len(matches) == 1, f'esperava 1 resultado, veio {len(matches)}'
+    cmd_id = matches[0]['id']
+
+    user.find(marker=f'cmd-copy-{cmd_id}').click()
+    await asyncio.sleep(0.2)
+
+    recents = db.list_recent()
+    assert any(kind == 'command' and item['id'] == cmd_id for kind, item in recents), (
+        'comando copiado nao apareceu nos recentes na bd'
+    )
+    print('RECENTS OK, copied command tracked as recent')
+
+
 async def test_theme_toggle(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)

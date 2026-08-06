@@ -21,6 +21,12 @@ def _connect():
     return conn
 
 
+def _add_column_if_missing(conn, table, column, coldef):
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+
+
 def _ensure_schema():
     with _connect() as conn:
         conn.execute(
@@ -93,6 +99,29 @@ def _ensure_schema():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recent_access (
+                item_type TEXT NOT NULL,
+                item_id INTEGER NOT NULL,
+                accessed_at TEXT NOT NULL,
+                PRIMARY KEY (item_type, item_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS glossary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                term TEXT NOT NULL,
+                definition TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        _add_column_if_missing(conn, "commands", "favorite", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(conn, "scenarios", "favorite", "INTEGER NOT NULL DEFAULT 0")
 
 
 _ensure_schema()
@@ -120,6 +149,9 @@ def update_command(command_id, command, description, category, tags="", example=
 def delete_command(command_id):
     with _connect() as conn:
         conn.execute("DELETE FROM commands WHERE id = ?", (command_id,))
+        conn.execute(
+            "DELETE FROM recent_access WHERE item_type = 'command' AND item_id = ?", (command_id,)
+        )
 
 
 def get_command(command_id):
@@ -223,6 +255,9 @@ def update_scenario(scenario_id, title, description, category):
 def delete_scenario(scenario_id):
     with _connect() as conn:
         conn.execute("DELETE FROM scenarios WHERE id = ?", (scenario_id,))
+        conn.execute(
+            "DELETE FROM recent_access WHERE item_type = 'scenario' AND item_id = ?", (scenario_id,)
+        )
 
 
 def replace_steps(scenario_id, steps):
@@ -289,6 +324,136 @@ def search_scenarios(query, category=None):
         sql += " AND s.category = ?"
         params.append(category)
     sql += " ORDER BY s.title"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def toggle_command_favorite(command_id):
+    with _connect() as conn:
+        row = conn.execute("SELECT favorite FROM commands WHERE id = ?", (command_id,)).fetchone()
+        new_value = 0 if row["favorite"] else 1
+        conn.execute("UPDATE commands SET favorite = ? WHERE id = ?", (new_value, command_id))
+    return bool(new_value)
+
+
+def toggle_scenario_favorite(scenario_id):
+    with _connect() as conn:
+        row = conn.execute("SELECT favorite FROM scenarios WHERE id = ?", (scenario_id,)).fetchone()
+        new_value = 0 if row["favorite"] else 1
+        conn.execute("UPDATE scenarios SET favorite = ? WHERE id = ?", (new_value, scenario_id))
+    return bool(new_value)
+
+
+def list_favorite_commands():
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM commands WHERE favorite = 1 ORDER BY command").fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_favorite_scenarios():
+    sql = (
+        "SELECT s.*, (SELECT COUNT(*) FROM scenario_steps st WHERE st.scenario_id = s.id) AS step_count "
+        "FROM scenarios s WHERE s.favorite = 1 ORDER BY s.title"
+    )
+    with _connect() as conn:
+        rows = conn.execute(sql).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_recent(item_type, item_id):
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO recent_access (item_type, item_id, accessed_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(item_type, item_id) DO UPDATE SET accessed_at = excluded.accessed_at",
+            (item_type, item_id, datetime.now().isoformat()),
+        )
+
+
+def list_recent(limit=8):
+    """Devolve os itens (comandos e cenários) acedidos mais recentemente, já
+    com os dados completos, como tuplos (item_type, dict), mais recentes
+    primeiro. Ignora silenciosamente entradas cujo item já foi apagado."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT item_type, item_id FROM recent_access ORDER BY accessed_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        items = []
+        for r in rows:
+            if r["item_type"] == "command":
+                cmd_row = conn.execute("SELECT * FROM commands WHERE id = ?", (r["item_id"],)).fetchone()
+                if cmd_row:
+                    items.append(("command", dict(cmd_row)))
+            else:
+                sc_row = conn.execute("SELECT * FROM scenarios WHERE id = ?", (r["item_id"],)).fetchone()
+                if sc_row:
+                    step_count = conn.execute(
+                        "SELECT COUNT(*) FROM scenario_steps WHERE scenario_id = ?", (r["item_id"],)
+                    ).fetchone()[0]
+                    d = dict(sc_row)
+                    d["step_count"] = step_count
+                    items.append(("scenario", d))
+    return items
+
+
+def add_term(term, definition, category):
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO glossary (term, definition, category, created_at) VALUES (?, ?, ?, ?)",
+            (term, definition, category, datetime.now().isoformat()),
+        )
+        return cur.lastrowid
+
+
+def update_term(term_id, term, definition, category):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE glossary SET term = ?, definition = ?, category = ? WHERE id = ?",
+            (term, definition, category, term_id),
+        )
+
+
+def delete_term(term_id):
+    with _connect() as conn:
+        conn.execute("DELETE FROM glossary WHERE id = ?", (term_id,))
+
+
+def get_term(term_id):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM glossary WHERE id = ?", (term_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_terms(category=None):
+    with _connect() as conn:
+        if category:
+            rows = conn.execute(
+                "SELECT * FROM glossary WHERE category = ? ORDER BY term", (category,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM glossary ORDER BY term").fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_terms():
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM glossary").fetchone()[0]
+
+
+def search_terms(query, category=None):
+    """Pesquisa simples por termo e definição. Sem query, devolve a lista
+    completa (opcionalmente filtrada por categoria)."""
+    query = (query or "").strip()
+    if not query:
+        return list_terms(category)
+
+    like = f"%{query}%"
+    sql = "SELECT * FROM glossary WHERE (term LIKE ? OR definition LIKE ?)"
+    params = [like, like]
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    sql += " ORDER BY term"
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
