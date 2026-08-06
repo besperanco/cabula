@@ -5,10 +5,15 @@ lado do executável e viajar com ele.
 """
 
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
-DB_FILE = Path(__file__).parent / "cabula.db"
+# `__file__` aponta para a pasta temporaria de extracao do PyInstaller
+# (--onefile), apagada ao fechar — usar a pasta do proprio .exe quando
+# empacotado, para os dados sobreviverem entre execucoes.
+_BASE_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+DB_FILE = _BASE_DIR / "cabula.db"
 
 CATEGORIES = ["Linux", "Kubernetes", "OpenStack"]
 SCENARIO_CATEGORIES = CATEGORIES + ["Geral"]

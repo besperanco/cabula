@@ -37,7 +37,11 @@ BRAND_POSITIVE = "#0ca30c"
 BRAND_NEGATIVE = "#d03b3b"
 BRAND_WARNING = "#c98500"
 
-STORAGE_SECRET_FILE = Path(__file__).parent / ".storage_secret"
+# mesma razao do DB_FILE em db.py: usar a pasta do .exe, nao a pasta
+# temporaria de extracao do PyInstaller, para o segredo (e o tema
+# preferido, guardado com ele) sobreviver entre execucoes
+_BASE_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+STORAGE_SECRET_FILE = _BASE_DIR / ".storage_secret"
 
 
 def _get_storage_secret():
