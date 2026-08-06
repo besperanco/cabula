@@ -228,6 +228,60 @@ def rename_command_category(old_category, new_category):
         return cur.rowcount
 
 
+def count_favorite_commands():
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM commands WHERE favorite = 1").fetchone()[0]
+
+
+def list_tags():
+    """Todas as palavras-chave (tags) usadas em pelo menos um comando,
+    por ordem alfabética."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT tags FROM commands WHERE tags != ''").fetchall()
+    tokens = set()
+    for r in rows:
+        tokens.update(r["tags"].split())
+    return sorted(tokens)
+
+
+def tag_counts():
+    with _connect() as conn:
+        rows = conn.execute("SELECT tags FROM commands WHERE tags != ''").fetchall()
+    counts = {}
+    for r in rows:
+        for token in set(r["tags"].split()):
+            counts[token] = counts.get(token, 0) + 1
+    return counts
+
+
+def rename_tag(old_tag, new_tag):
+    """Renomeia uma tag em todos os comandos que a usam. Se `new_tag` já
+    estiver presente num comando, a tag antiga é só removida (sem repetir).
+    Ao contrário das categorias, uma tag pode coexistir com várias outras
+    no mesmo comando, por isso a substituição é feita token a token."""
+    old_tag = (old_tag or "").strip()
+    new_tag = (new_tag or "").strip()
+    if not old_tag or not new_tag or old_tag == new_tag:
+        return 0
+    with _connect() as conn:
+        rows = conn.execute("SELECT id, tags FROM commands WHERE tags != ''").fetchall()
+        changed = 0
+        for r in rows:
+            tokens = r["tags"].split()
+            if old_tag not in tokens:
+                continue
+            new_tokens = []
+            seen = set()
+            for t in tokens:
+                replacement = new_tag if t == old_tag else t
+                if replacement not in seen:
+                    new_tokens.append(replacement)
+                    seen.add(replacement)
+            conn.execute("UPDATE commands SET tags = ? WHERE id = ?", (" ".join(new_tokens), r["id"]))
+            changed += 1
+    return changed
+
+
 def _build_fts_query(query):
     """Cada palavra vira um termo de prefixo entre aspas (ex: "pod"* ), para
     apanhar variações (pod/pods) e evitar que caracteres especiais do FTS5
@@ -388,6 +442,11 @@ def rename_scenario_category(old_category, new_category):
     with _connect() as conn:
         cur = conn.execute("UPDATE scenarios SET category = ? WHERE category = ?", (new_category, old_category))
         return cur.rowcount
+
+
+def count_favorite_scenarios():
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM scenarios WHERE favorite = 1").fetchone()[0]
 
 
 def search_scenarios(query, category=None):

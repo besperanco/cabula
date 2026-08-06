@@ -18,6 +18,13 @@ async def test_loads_with_seeded_commands(user: User) -> None:
     print('PAGE LOADED WITH SEEDED DATA')
 
 
+async def test_tab_shows_command_count(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+    await user.should_see(f'Comandos ({db.count_commands()})', retries=50)
+    print('TAB COUNT OK')
+
+
 async def test_search_by_concept_not_command(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)
@@ -124,6 +131,51 @@ async def test_add_edit_delete_command(user: User) -> None:
     print('DELETE OK')
 
 
+async def test_duplicate_command(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='search-input').type('systemctl status')
+    await user.should_see('systemctl status', retries=50)
+
+    matches = db.search_commands('systemctl status')
+    assert len(matches) == 1, f'esperava 1 resultado, veio {len(matches)}'
+    cmd_id = matches[0]['id']
+
+    user.find(marker=f'cmd-duplicate-{cmd_id}').click()
+    await user.should_see('Duplicar comando', retries=50)
+    user.find(marker='dialog-save').click()
+
+    duplicates = db.search_commands('systemctl status')
+    assert len(duplicates) == 2, f'esperava 2 comandos "systemctl status" apos duplicar, veio {len(duplicates)}'
+    print('DUPLICATE COMMAND OK')
+
+    # apaga o duplicado, mantendo so o original semeado
+    new_one = max(duplicates, key=lambda c: c['id'])
+    db.delete_command(new_one['id'])
+
+
+async def test_rename_tag_merges(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    cmd_id = db.add_command('tag-teste-comando-unico', 'desc', 'Linux', 'tagtemporaria outratag')
+    try:
+        user.find(marker='manage-tags').click()
+        await user.should_see('Gerir tags', retries=50)
+
+        name_input = next(iter(user.find(marker='rename-tag-input-tagtemporaria').elements))
+        name_input.value = 'outratag'
+        user.find(marker='rename-tag-save-tagtemporaria').click()
+        await asyncio.sleep(0.2)
+
+        updated = db.get_command(cmd_id)
+        assert updated['tags'] == 'outratag', f'tags deviam ter fundido em "outratag", veio "{updated["tags"]}"'
+        print('RENAME/MERGE TAG OK')
+    finally:
+        db.delete_command(cmd_id)
+
+
 async def test_scenarios_tab_lists_seeded_playbooks(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)
@@ -216,6 +268,28 @@ async def test_add_edit_delete_scenario(user: User) -> None:
         await asyncio.sleep(0.05)
     assert db.get_scenario(sc_id) is None, 'cenario ainda existe na bd apos apagar'
     print('SCENARIO DELETE OK')
+
+
+async def test_duplicate_scenario(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    await user.should_see('Disco cheio', retries=50)
+
+    scenarios = db.search_scenarios('Disco cheio')
+    assert len(scenarios) == 1, f'esperava 1 cenario, veio {len(scenarios)}'
+    sc_id = scenarios[0]['id']
+
+    user.find(marker=f'scenario-duplicate-{sc_id}').click()
+    await user.should_see('Duplicar cenário', retries=50)
+    user.find(marker='scenario-save').click()
+
+    duplicates = db.search_scenarios('Disco cheio (cópia)')
+    assert len(duplicates) == 1, f'esperava encontrar o cenario duplicado, veio {len(duplicates)}'
+    print('DUPLICATE SCENARIO OK')
+
+    db.delete_scenario(duplicates[0]['id'])
 
 
 async def test_glossary_tab_lists_seeded_terms(user: User) -> None:

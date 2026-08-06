@@ -88,13 +88,22 @@ def category_icon(category):
     return CATEGORY_ICONS.get(category, "code")
 
 
-def open_command_dialog(existing=None, on_saved=None):
+def open_command_dialog(existing=None, on_saved=None, duplicate_from=None):
     """Diálogo de adicionar/editar um comando. `existing`: dict do comando a
-    editar, ou None para criar um novo."""
+    editar, ou None para criar um novo. `duplicate_from`: dict de um comando
+    a usar como ponto de partida para um novo (fica pré-preenchido, mas
+    `existing` continua None — ou seja, "Guardar" cria um comando novo)."""
+    prefill = existing or duplicate_from
     with context.client.content:
         dialog = ui.dialog()
     with dialog, ui.card().classes("w-full").style("min-width:560px"):
-        ui.label("Editar comando" if existing else "Novo comando").classes("text-lg font-bold")
+        if existing:
+            heading = "Editar comando"
+        elif duplicate_from:
+            heading = "Duplicar comando"
+        else:
+            heading = "Novo comando"
+        ui.label(heading).classes("text-lg font-bold")
 
         command_input = ui.input(label="Comando").classes("w-full font-mono").props("outlined dense").mark(
             "dialog-command"
@@ -116,13 +125,13 @@ def open_command_dialog(existing=None, on_saved=None):
         )
         notes_input = ui.textarea(label="Notas (opcional)").classes("w-full").props("outlined dense autogrow")
 
-        if existing:
-            command_input.value = existing["command"]
-            category_select.value = existing["category"]
-            description_input.value = existing["description"]
-            tags_input.value = existing["tags"]
-            example_input.value = existing["example"]
-            notes_input.value = existing["notes"]
+        if prefill:
+            command_input.value = prefill["command"]
+            category_select.value = prefill["category"]
+            description_input.value = prefill["description"]
+            tags_input.value = prefill["tags"]
+            example_input.value = prefill["example"]
+            notes_input.value = prefill["notes"]
 
         error_label = ui.label("").classes("text-negative text-sm")
 
@@ -221,13 +230,22 @@ def open_scenario_detail(sc):
     dialog.open()
 
 
-def open_scenario_dialog(existing=None, on_saved=None):
+def open_scenario_dialog(existing=None, on_saved=None, duplicate_from=None):
     """Diálogo de adicionar/editar um cenário, com passos dinâmicos.
-    `existing`: dict devolvido por `db.get_scenario`, ou None para criar."""
+    `existing`: dict devolvido por `db.get_scenario`, ou None para criar.
+    `duplicate_from`: dict (mesmo formato) a usar como ponto de partida para
+    um cenário novo — fica pré-preenchido, mas `existing` continua None."""
+    prefill = existing or duplicate_from
     with context.client.content:
         dialog = ui.dialog()
     with dialog, ui.card().classes("w-full").style("min-width:640px; max-width:800px"):
-        ui.label("Editar cenário" if existing else "Novo cenário").classes("text-lg font-bold")
+        if existing:
+            heading = "Editar cenário"
+        elif duplicate_from:
+            heading = "Duplicar cenário"
+        else:
+            heading = "Novo cenário"
+        ui.label(heading).classes("text-lg font-bold")
 
         title_input = ui.input(label="Título").classes("w-full").props("outlined dense").mark(
             "scenario-title"
@@ -271,11 +289,11 @@ def open_scenario_dialog(existing=None, on_saved=None):
             "flat dense no-caps"
         ).mark("scenario-add-step")
 
-        if existing:
-            title_input.value = existing["title"]
-            category_select.value = existing["category"]
-            description_input.value = existing["description"]
-            for step in existing["steps"]:
+        if prefill:
+            title_input.value = prefill["title"] + (" (cópia)" if duplicate_from else "")
+            category_select.value = prefill["category"]
+            description_input.value = prefill["description"]
+            for step in prefill["steps"]:
                 add_step_row(step["command"], step["note"])
         else:
             add_step_row()
@@ -401,26 +419,40 @@ def confirm_delete_term_dialog(t, on_deleted=None):
 
 
 def open_manage_categories_dialog(kind, on_renamed=None):
-    """Diálogo para renomear categorias de comandos ou de cenários.
-    `kind`: "command" ou "scenario". Renomear para o nome de uma categoria
-    já existente funde as duas."""
+    """Diálogo para renomear categorias de comandos/cenários, ou tags de
+    comandos. `kind`: "command", "scenario" ou "tag". Renomear para um nome
+    já existente funde os dois (categoria/tag antiga desaparece)."""
     if kind == "command":
-        list_fn, counts_fn, rename_fn, title = (
-            db.list_command_categories, db.command_category_counts, db.rename_command_category, "comandos",
+        list_fn, counts_fn, rename_fn = (
+            db.list_command_categories, db.command_category_counts, db.rename_command_category,
+        )
+        heading = "Gerir categorias"
+        description = (
+            "Renomeia uma categoria de comandos — todos os comandos nela passam a usar o novo nome. "
+            "Se escreveres o nome de uma categoria já existente, as duas ficam fundidas numa só."
+        )
+    elif kind == "scenario":
+        list_fn, counts_fn, rename_fn = (
+            db.list_scenario_categories, db.scenario_category_counts, db.rename_scenario_category,
+        )
+        heading = "Gerir categorias"
+        description = (
+            "Renomeia uma categoria de cenários — todos os cenários nela passam a usar o novo nome. "
+            "Se escreveres o nome de uma categoria já existente, as duas ficam fundidas numa só."
         )
     else:
-        list_fn, counts_fn, rename_fn, title = (
-            db.list_scenario_categories, db.scenario_category_counts, db.rename_scenario_category, "cenários",
+        list_fn, counts_fn, rename_fn = db.list_tags, db.tag_counts, db.rename_tag
+        heading = "Gerir tags"
+        description = (
+            "Renomeia uma tag (palavra-chave de pesquisa) — todos os comandos com ela passam a usar a "
+            "nova. Se escreveres o nome de uma tag já existente, as duas ficam fundidas numa só."
         )
 
     with context.client.content:
         dialog = ui.dialog()
     with dialog, ui.card().classes("w-full").style("min-width:520px"):
-        ui.label("Gerir categorias").classes("text-lg font-bold")
-        ui.label(
-            f"Renomeia uma categoria de {title} — todos os itens nela passam a usar o novo nome. "
-            "Se escreveres o nome de uma categoria já existente, as duas ficam fundidas numa só."
-        ).classes("text-sm opacity-70")
+        ui.label(heading).classes("text-lg font-bold")
+        ui.label(description).classes("text-sm opacity-70")
 
         rows_container = ui.column().classes("w-full gap-2 mt-2")
 
@@ -529,10 +561,23 @@ def main_page():
 
     with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-3"):
         with ui.tabs().classes("w-full") as tabs:
-            tab_commands = ui.tab("Comandos", icon="terminal").mark("tab-commands")
-            tab_scenarios = ui.tab("Cenários", icon="route").mark("tab-scenarios")
-            tab_glossary = ui.tab("Glossário", icon="menu_book").mark("tab-glossary")
-            tab_favorites = ui.tab("Favoritos", icon="star").mark("tab-favorites")
+            # "name" (1º argumento) fica fixo — e o que tabs.value devolve e
+            # o que identifica o separador. "label" e so o texto mostrado,
+            # por isso pode ter a contagem sem partir a logica de troca de
+            # separador.
+            tab_commands = ui.tab("Comandos", label="Comandos", icon="terminal").mark("tab-commands")
+            tab_scenarios = ui.tab("Cenários", label="Cenários", icon="route").mark("tab-scenarios")
+            tab_glossary = ui.tab("Glossário", label="Glossário", icon="menu_book").mark("tab-glossary")
+            tab_favorites = ui.tab("Favoritos", label="Favoritos", icon="star").mark("tab-favorites")
+
+        def update_tab_labels():
+            tab_commands.set_label(f"Comandos ({db.count_commands()})")
+            tab_scenarios.set_label(f"Cenários ({db.count_scenarios()})")
+            tab_glossary.set_label(f"Glossário ({db.count_terms()})")
+            fav_count = db.count_favorite_commands() + db.count_favorite_scenarios()
+            tab_favorites.set_label(f"Favoritos ({fav_count})")
+
+        update_tab_labels()
 
         def focus_search():
             # o atalho global "/" ignora-se sozinho quando ja estas a
@@ -568,6 +613,10 @@ def main_page():
                         icon="settings",
                         on_click=lambda: open_manage_categories_dialog("command", on_renamed=refresh),
                     ).props("flat dense round").tooltip("Gerir categorias").mark("manage-command-categories")
+                    ui.button(
+                        icon="label",
+                        on_click=lambda: open_manage_categories_dialog("tag", on_renamed=refresh),
+                    ).props("flat dense round").tooltip("Gerir tags").mark("manage-tags")
 
                 with ui.row().classes("gap-2") as category_row:
                     pass
@@ -599,6 +648,12 @@ def main_page():
                                 icon="edit", on_click=lambda c=cmd: open_command_dialog(c, on_saved=refresh)
                             ).props("flat dense round size=sm").tooltip("Editar").mark(f"cmd-edit-{cmd['id']}")
                             ui.button(
+                                icon="library_add",
+                                on_click=lambda c=cmd: open_command_dialog(duplicate_from=c, on_saved=refresh),
+                            ).props("flat dense round size=sm").tooltip("Duplicar").mark(
+                                f"cmd-duplicate-{cmd['id']}"
+                            )
+                            ui.button(
                                 icon="delete", on_click=lambda c=cmd: confirm_delete_dialog(c, on_deleted=refresh)
                             ).props("flat dense round size=sm").tooltip("Apagar").mark(f"cmd-delete-{cmd['id']}")
                         ui.label(cmd["description"]).classes("text-sm mt-1")
@@ -610,6 +665,7 @@ def main_page():
                             ui.label(cmd["notes"]).classes("text-xs opacity-60 mt-1 italic")
 
                 def refresh():
+                    update_tab_labels()
                     render_category_filters()
                     results_container.clear()
                     results = db.search_commands(state["query"], state["category"])
@@ -698,6 +754,14 @@ def main_page():
                                 f"scenario-edit-{sc['id']}"
                             )
                             ui.button(
+                                icon="library_add",
+                                on_click=lambda s=sc: open_scenario_dialog(
+                                    duplicate_from=db.get_scenario(s["id"]), on_saved=refresh_scenarios
+                                ),
+                            ).props("flat dense round size=sm").tooltip("Duplicar").mark(
+                                f"scenario-duplicate-{sc['id']}"
+                            )
+                            ui.button(
                                 icon="delete",
                                 on_click=lambda s=sc: confirm_delete_scenario_dialog(
                                     s, on_deleted=refresh_scenarios
@@ -709,6 +773,7 @@ def main_page():
                             ui.label(sc["description"]).classes("text-sm mt-1 opacity-80")
 
                 def refresh_scenarios():
+                    update_tab_labels()
                     render_scenario_category_filters()
                     scenario_results_container.clear()
                     results = db.search_scenarios(state["scenario_query"], state["scenario_category"])
@@ -783,6 +848,7 @@ def main_page():
                         ui.label(t["definition"]).classes("text-sm mt-1")
 
                 def refresh_glossary():
+                    update_tab_labels()
                     glossary_results_container.clear()
                     results = db.search_terms(state["glossary_query"], state["glossary_category"])
                     glossary_count_label.set_text(f"{len(results)} termo(s)")
@@ -878,6 +944,7 @@ def main_page():
                                 ui.label(item["description"]).classes("text-sm mt-1 opacity-80")
 
                 def refresh_home():
+                    update_tab_labels()
                     cat = state["favorites_category"]
                     recent_container.clear()
                     favorites_container.clear()
