@@ -208,6 +208,26 @@ def list_command_categories():
     return CATEGORIES + extra
 
 
+def command_category_counts():
+    with _connect() as conn:
+        rows = conn.execute("SELECT category, COUNT(*) AS n FROM commands GROUP BY category").fetchall()
+    return {r["category"]: r["n"] for r in rows}
+
+
+def rename_command_category(old_category, new_category):
+    """Renomeia uma categoria em todos os comandos que a usam. Se
+    `new_category` já existir (a menos de maiúsculas), os comandos passam a
+    ficar juntos nessa categoria existente — funciona como "fundir"."""
+    new_category = (new_category or "").strip()
+    if not new_category or new_category == old_category:
+        return 0
+    others = [c for c in list_command_categories() if c != old_category]
+    new_category = _normalize_category(new_category, others)
+    with _connect() as conn:
+        cur = conn.execute("UPDATE commands SET category = ? WHERE category = ?", (new_category, old_category))
+        return cur.rowcount
+
+
 def _build_fts_query(query):
     """Cada palavra vira um termo de prefixo entre aspas (ex: "pod"* ), para
     apanhar variações (pod/pods) e evitar que caracteres especiais do FTS5
@@ -348,6 +368,26 @@ def list_scenario_categories():
     existing = {r["category"] for r in rows if r["category"]}
     extra = sorted(existing - set(SCENARIO_CATEGORIES))
     return SCENARIO_CATEGORIES + extra
+
+
+def scenario_category_counts():
+    with _connect() as conn:
+        rows = conn.execute("SELECT category, COUNT(*) AS n FROM scenarios GROUP BY category").fetchall()
+    return {r["category"]: r["n"] for r in rows}
+
+
+def rename_scenario_category(old_category, new_category):
+    """Renomeia uma categoria em todos os cenários que a usam. Se
+    `new_category` já existir (a menos de maiúsculas), os cenários passam a
+    ficar juntos nessa categoria existente — funciona como "fundir"."""
+    new_category = (new_category or "").strip()
+    if not new_category or new_category == old_category:
+        return 0
+    others = [c for c in list_scenario_categories() if c != old_category]
+    new_category = _normalize_category(new_category, others)
+    with _connect() as conn:
+        cur = conn.execute("UPDATE scenarios SET category = ? WHERE category = ?", (new_category, old_category))
+        return cur.rowcount
 
 
 def search_scenarios(query, category=None):

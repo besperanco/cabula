@@ -399,6 +399,41 @@ async def test_import_replace_wipes_existing_data(user: User) -> None:
     seed_glossary.seed()
 
 
+async def test_rename_command_category_merges(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    cmd_id = db.add_command('rename-cat-teste-unico', 'desc', 'CategoriaTemp')
+    try:
+        user.find(marker='manage-command-categories').click()
+        await user.should_see('Gerir categorias', retries=50)
+
+        name_input = next(iter(user.find(marker='rename-command-input-CategoriaTemp').elements))
+        name_input.value = 'Linux'
+        user.find(marker='rename-command-save-CategoriaTemp').click()
+        await asyncio.sleep(0.2)
+
+        assert db.get_command(cmd_id)['category'] == 'Linux', 'categoria devia ter sido fundida em Linux'
+        assert 'CategoriaTemp' not in db.list_command_categories(), 'categoria antiga devia ter desaparecido'
+        print('RENAME/MERGE CATEGORY OK')
+    finally:
+        db.delete_command(cmd_id)
+
+
+async def test_scenario_copy_all_button_present(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    user.find(marker='tab-scenarios').click()
+    await user.should_see('Diagnosticar um pod que não arranca', retries=50)
+
+    scenarios = db.search_scenarios('pod que não arranca')
+    sc_id = scenarios[0]['id']
+    user.find(marker=f'scenario-view-{sc_id}').click()
+    await user.should_see(marker='scenario-copy-all', retries=50)
+    print('SCENARIO COPY-ALL BUTTON OK')
+
+
 async def test_theme_toggle(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)

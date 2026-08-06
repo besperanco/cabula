@@ -208,7 +208,16 @@ def open_scenario_detail(sc):
                     if step["note"]:
                         ui.label(step["note"]).classes("text-xs opacity-70 mt-1")
 
-        ui.button("Fechar", on_click=dialog.close).props("flat no-caps mt-2")
+        all_commands = "\n".join(step["command"] for step in full["steps"] if step["command"])
+        with ui.row().classes("mt-2 gap-2"):
+            if all_commands:
+                ui.button(
+                    "Copiar tudo", icon="content_copy",
+                    on_click=lambda: (
+                        ui.clipboard.write(all_commands), ui.notify("Todos os comandos copiados!")
+                    ),
+                ).props("outline no-caps").mark("scenario-copy-all")
+            ui.button("Fechar", on_click=dialog.close).props("flat no-caps")
     dialog.open()
 
 
@@ -391,6 +400,60 @@ def confirm_delete_term_dialog(t, on_deleted=None):
     dialog.open()
 
 
+def open_manage_categories_dialog(kind, on_renamed=None):
+    """Diálogo para renomear categorias de comandos ou de cenários.
+    `kind`: "command" ou "scenario". Renomear para o nome de uma categoria
+    já existente funde as duas."""
+    if kind == "command":
+        list_fn, counts_fn, rename_fn, title = (
+            db.list_command_categories, db.command_category_counts, db.rename_command_category, "comandos",
+        )
+    else:
+        list_fn, counts_fn, rename_fn, title = (
+            db.list_scenario_categories, db.scenario_category_counts, db.rename_scenario_category, "cenários",
+        )
+
+    with context.client.content:
+        dialog = ui.dialog()
+    with dialog, ui.card().classes("w-full").style("min-width:520px"):
+        ui.label("Gerir categorias").classes("text-lg font-bold")
+        ui.label(
+            f"Renomeia uma categoria de {title} — todos os itens nela passam a usar o novo nome. "
+            "Se escreveres o nome de uma categoria já existente, as duas ficam fundidas numa só."
+        ).classes("text-sm opacity-70")
+
+        rows_container = ui.column().classes("w-full gap-2 mt-2")
+
+        def render_rows():
+            rows_container.clear()
+            counts = counts_fn()
+            with rows_container:
+                for cat in list_fn():
+                    with ui.row().classes("w-full items-center gap-2"):
+                        ui.label(f"{cat} ({counts.get(cat, 0)})").classes("w-40 text-sm shrink-0")
+                        name_input = ui.input(value=cat).classes("flex-grow font-mono").props(
+                            "outlined dense"
+                        ).mark(f"rename-{kind}-input-{cat}")
+
+                        def do_rename(old=cat, inp=name_input):
+                            new_name = (inp.value or "").strip()
+                            if not new_name or new_name == old:
+                                return
+                            rename_fn(old, new_name)
+                            ui.notify(f'"{old}" passou a "{new_name}".', type="positive")
+                            render_rows()
+                            if on_renamed:
+                                on_renamed()
+
+                        ui.button(icon="check", on_click=do_rename).props(
+                            "flat dense round size=sm"
+                        ).tooltip("Guardar").mark(f"rename-{kind}-save-{cat}")
+
+        render_rows()
+        ui.button("Fechar", on_click=dialog.close).props("flat no-caps mt-2")
+    dialog.open()
+
+
 def do_export():
     data = db.export_data()
     # tem de ser bytes: ui.download() so reconhece conteudo bruto (em vez de
@@ -471,6 +534,24 @@ def main_page():
             tab_glossary = ui.tab("Glossário", icon="menu_book").mark("tab-glossary")
             tab_favorites = ui.tab("Favoritos", icon="star").mark("tab-favorites")
 
+        def focus_search():
+            # o atalho global "/" ignora-se sozinho quando ja estas a
+            # escrever num input/select/textarea (comportamento por omissao
+            # do ui.keyboard), por isso so foca o campo da pesquisa do
+            # separador ativo no momento
+            if tabs.value == "Comandos":
+                search_input.run_method("focus")
+            elif tabs.value == "Cenários":
+                scenario_search_input.run_method("focus")
+            elif tabs.value == "Glossário":
+                glossary_search_input.run_method("focus")
+
+        def handle_global_key(e):
+            if e.action.keydown and e.key.name == "/":
+                focus_search()
+
+        ui.keyboard(on_key=handle_global_key)
+
         with ui.tab_panels(tabs, value=tab_commands).classes("w-full"):
             with ui.tab_panel(tab_commands).classes("gap-3"):
                 with ui.row().classes("w-full items-center gap-2"):
@@ -483,6 +564,10 @@ def main_page():
                     ui.button(
                         "Novo comando", icon="add", on_click=lambda: open_command_dialog(on_saved=refresh)
                     ).props("unelevated no-caps").mark("new-command")
+                    ui.button(
+                        icon="settings",
+                        on_click=lambda: open_manage_categories_dialog("command", on_renamed=refresh),
+                    ).props("flat dense round").tooltip("Gerir categorias").mark("manage-command-categories")
 
                 with ui.row().classes("gap-2") as category_row:
                     pass
@@ -574,6 +659,10 @@ def main_page():
                         "Novo cenário", icon="add",
                         on_click=lambda: open_scenario_dialog(on_saved=refresh_scenarios),
                     ).props("unelevated no-caps").mark("new-scenario")
+                    ui.button(
+                        icon="settings",
+                        on_click=lambda: open_manage_categories_dialog("scenario", on_renamed=refresh_scenarios),
+                    ).props("flat dense round").tooltip("Gerir categorias").mark("manage-scenario-categories")
 
                 with ui.row().classes("gap-2") as scenario_category_row:
                     pass
