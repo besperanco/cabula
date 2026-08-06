@@ -224,9 +224,9 @@ def open_scenario_detail(sc):
         for i, step in enumerate(full["steps"], start=1):
             with ui.row().classes("w-full items-start gap-2 mb-1"):
                 ui.badge(str(i)).props("color=primary")
-                with ui.column().classes("gap-0 flex-grow"):
+                with ui.column().classes("gap-0 flex-grow w-full"):
                     if step["command"]:
-                        with ui.row().classes("items-center gap-1"):
+                        with ui.row().classes("items-center gap-1 w-full"):
                             cmd_input = ui.input(value=step["command"]).classes(
                                 "flex-grow font-mono text-sm"
                             ).props("outlined dense").mark(f"scenario-step-command-{i}")
