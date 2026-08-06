@@ -99,9 +99,9 @@ def open_command_dialog(existing=None, on_saved=None):
         command_input = ui.input(label="Comando").classes("w-full font-mono").props("outlined dense").mark(
             "dialog-command"
         )
-        category_select = ui.select(db.CATEGORIES, label="Categoria", value=db.CATEGORIES[0]).classes(
-            "w-full"
-        ).props("outlined dense")
+        category_select = ui.select(
+            db.list_command_categories(), label="Categoria", value=db.CATEGORIES[0], new_value_mode="add-unique",
+        ).classes("w-full").props("outlined dense").tooltip("Escreve um nome novo para criar uma categoria")
         description_input = ui.textarea(label="Descrição — o que faz").classes("w-full").props(
             "outlined dense autogrow"
         ).mark("dialog-description")
@@ -219,8 +219,9 @@ def open_scenario_dialog(existing=None, on_saved=None):
             "scenario-title"
         )
         category_select = ui.select(
-            db.SCENARIO_CATEGORIES, label="Categoria", value=db.SCENARIO_CATEGORIES[0]
-        ).classes("w-full").props("outlined dense")
+            db.list_scenario_categories(), label="Categoria", value=db.SCENARIO_CATEGORIES[0],
+            new_value_mode="add-unique",
+        ).classes("w-full").props("outlined dense").tooltip("Escreve um nome novo para criar uma categoria")
         description_input = ui.textarea(label="Descrição — quando usar este cenário").classes(
             "w-full"
         ).props("outlined dense autogrow").mark("scenario-description")
@@ -515,6 +516,7 @@ def main_page():
                             ui.label(cmd["notes"]).classes("text-xs opacity-60 mt-1 italic")
 
                 def refresh():
+                    render_category_filters()
                     results_container.clear()
                     results = db.search_commands(state["query"], state["category"])
                     count_label.set_text(f"{len(results)} comando(s)")
@@ -528,19 +530,20 @@ def main_page():
 
                 def set_category(cat):
                     state["category"] = cat
-                    for c, btn in category_buttons.items():
-                        btn.props(f"{'unelevated' if c == cat else 'flat'}")
                     refresh()
 
-                category_buttons = {}
-                with category_row:
-                    category_buttons[None] = ui.button("Todos", on_click=lambda: set_category(None)).props(
-                        "unelevated dense no-caps"
-                    ).mark("filter-Todos")
-                    for cat in db.CATEGORIES:
-                        category_buttons[cat] = ui.button(
-                            cat, icon=category_icon(cat), on_click=lambda c=cat: set_category(c)
-                        ).props("flat dense no-caps").mark(f"filter-{cat}")
+                def render_category_filters():
+                    # reconstroi a lista a cada refresh, para categorias novas
+                    # (criadas ao guardar um comando) aparecerem sem reiniciar
+                    category_row.clear()
+                    with category_row:
+                        ui.button("Todos", on_click=lambda: set_category(None)).props(
+                            f"{'unelevated' if state['category'] is None else 'flat'} dense no-caps"
+                        ).mark("filter-Todos")
+                        for cat in db.list_command_categories():
+                            ui.button(cat, icon=category_icon(cat), on_click=lambda c=cat: set_category(c)).props(
+                                f"{'unelevated' if state['category'] == cat else 'flat'} dense no-caps"
+                            ).mark(f"filter-{cat}")
 
                 def on_search_change(e):
                     state["query"] = e.value or ""
@@ -608,6 +611,7 @@ def main_page():
                             ui.label(sc["description"]).classes("text-sm mt-1 opacity-80")
 
                 def refresh_scenarios():
+                    render_scenario_category_filters()
                     scenario_results_container.clear()
                     results = db.search_scenarios(state["scenario_query"], state["scenario_category"])
                     scenario_count_label.set_text(f"{len(results)} cenário(s)")
@@ -621,19 +625,22 @@ def main_page():
 
                 def set_scenario_category(cat):
                     state["scenario_category"] = cat
-                    for c, btn in scenario_category_buttons.items():
-                        btn.props(f"{'unelevated' if c == cat else 'flat'}")
                     refresh_scenarios()
 
-                scenario_category_buttons = {}
-                with scenario_category_row:
-                    scenario_category_buttons[None] = ui.button(
-                        "Todos", on_click=lambda: set_scenario_category(None)
-                    ).props("unelevated dense no-caps").mark("scenario-filter-Todos")
-                    for cat in db.SCENARIO_CATEGORIES:
-                        scenario_category_buttons[cat] = ui.button(
-                            cat, icon=category_icon(cat), on_click=lambda c=cat: set_scenario_category(c)
-                        ).props("flat dense no-caps").mark(f"scenario-filter-{cat}")
+                def render_scenario_category_filters():
+                    # reconstroi a cada refresh, para categorias novas (criadas
+                    # ao guardar um cenário) aparecerem sem reiniciar
+                    scenario_category_row.clear()
+                    with scenario_category_row:
+                        ui.button("Todos", on_click=lambda: set_scenario_category(None)).props(
+                            f"{'unelevated' if state['scenario_category'] is None else 'flat'} dense no-caps"
+                        ).mark("scenario-filter-Todos")
+                        for cat in db.list_scenario_categories():
+                            ui.button(
+                                cat, icon=category_icon(cat), on_click=lambda c=cat: set_scenario_category(c)
+                            ).props(
+                                f"{'unelevated' if state['scenario_category'] == cat else 'flat'} dense no-caps"
+                            ).mark(f"scenario-filter-{cat}")
 
                 def on_scenario_search_change(e):
                     state["scenario_query"] = e.value or ""

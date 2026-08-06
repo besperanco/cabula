@@ -37,6 +37,35 @@ async def test_category_filter(user: User) -> None:
     print('CATEGORY FILTER OK')
 
 
+def test_command_category_normalization_reuses_existing_casing() -> None:
+    cmd_id1 = db.add_command('boundary-cat-teste-1', 'desc', 'Boundary')
+    cmd_id2 = db.add_command('boundary-cat-teste-2', 'desc', 'boundary')
+    try:
+        assert db.get_command(cmd_id1)['category'] == 'Boundary'
+        assert db.get_command(cmd_id2)['category'] == 'Boundary', (
+            'categoria devia ter sido normalizada para a capitalizacao ja existente'
+        )
+        assert db.list_command_categories().count('Boundary') == 1, 'nao devia haver duas categorias "Boundary"'
+        print('CATEGORY NORMALIZATION OK, "boundary" reused existing "Boundary"')
+    finally:
+        db.delete_command(cmd_id1)
+        db.delete_command(cmd_id2)
+
+
+async def test_new_command_category_becomes_a_filter(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    cmd_id = db.add_command('boundary-teste-filtro-unico', 'comando de teste com categoria nova', 'Boundary')
+    try:
+        user.find(marker='search-input').type('boundary-teste-filtro-unico')
+        await user.should_see('boundary-teste-filtro-unico', retries=50)
+        await user.should_see(marker='filter-Boundary', retries=50)
+        print('DYNAMIC CATEGORY OK, new category appears as a filter button')
+    finally:
+        db.delete_command(cmd_id)
+
+
 async def test_add_edit_delete_command(user: User) -> None:
     await user.open('/')
     await user.should_see('Cábula', retries=50)
@@ -95,6 +124,22 @@ async def test_scenario_detail_shows_ordered_steps(user: User) -> None:
     user.find(marker=f'scenario-view-{sc_id}').click()
     await user.should_see('kubectl describe pod "meu-pod"', retries=50)
     print('SCENARIO DETAIL OK, steps shown in order')
+
+
+async def test_new_scenario_category_becomes_a_filter(user: User) -> None:
+    await user.open('/')
+    await user.should_see('Cábula', retries=50)
+
+    sc_id = db.add_scenario('cenario-teste-categoria-nova', 'descricao', 'Boundary')
+    db.replace_steps(sc_id, [('echo "teste"', '')])
+    try:
+        user.find(marker='tab-scenarios').click()
+        user.find(marker='scenario-search-input').type('cenario-teste-categoria-nova')
+        await user.should_see('cenario-teste-categoria-nova', retries=50)
+        await user.should_see(marker='scenario-filter-Boundary', retries=50)
+        print('DYNAMIC SCENARIO CATEGORY OK, new category appears as a filter button')
+    finally:
+        db.delete_scenario(sc_id)
 
 
 async def test_add_edit_delete_scenario(user: User) -> None:

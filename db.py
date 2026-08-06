@@ -19,6 +19,20 @@ CATEGORIES = ["Linux", "Kubernetes", "OpenStack"]
 SCENARIO_CATEGORIES = CATEGORIES + ["Geral"]
 
 
+def _normalize_category(category, existing_categories):
+    """Reaproveita a capitalização de uma categoria já existente (ex:
+    "boundary" -> "Boundary" se já existir assim), para o utilizador não
+    criar sem querer duas categorias diferentes só por causa de maiúsculas.
+    Categorias mesmo novas ficam tal e qual como o utilizador escreveu."""
+    category = (category or "").strip()
+    if not category:
+        return category
+    for existing in existing_categories:
+        if existing.lower() == category.lower():
+            return existing
+    return category
+
+
 def _connect():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -133,6 +147,7 @@ _ensure_schema()
 
 
 def add_command(command, description, category, tags="", example="", notes=""):
+    category = _normalize_category(category, list_command_categories())
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO commands (command, description, category, tags, example, notes, created_at) "
@@ -143,6 +158,7 @@ def add_command(command, description, category, tags="", example="", notes=""):
 
 
 def update_command(command_id, command, description, category, tags="", example="", notes=""):
+    category = _normalize_category(category, list_command_categories())
     with _connect() as conn:
         conn.execute(
             "UPDATE commands SET command = ?, description = ?, category = ?, tags = ?, "
@@ -179,6 +195,17 @@ def list_commands(category=None):
 def count_commands():
     with _connect() as conn:
         return conn.execute("SELECT COUNT(*) FROM commands").fetchone()[0]
+
+
+def list_command_categories():
+    """As categorias base (Linux/Kubernetes/OpenStack), pela ordem
+    habitual, seguidas de quaisquer categorias novas que o utilizador
+    tenha criado (ex: "Boundary"), por ordem alfabética."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT DISTINCT category FROM commands").fetchall()
+    existing = {r["category"] for r in rows if r["category"]}
+    extra = sorted(existing - set(CATEGORIES))
+    return CATEGORIES + extra
 
 
 def _build_fts_query(query):
@@ -241,6 +268,7 @@ def _fallback_search(query, category=None):
 
 
 def add_scenario(title, description, category):
+    category = _normalize_category(category, list_scenario_categories())
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO scenarios (title, description, category, created_at) VALUES (?, ?, ?, ?)",
@@ -250,6 +278,7 @@ def add_scenario(title, description, category):
 
 
 def update_scenario(scenario_id, title, description, category):
+    category = _normalize_category(category, list_scenario_categories())
     with _connect() as conn:
         conn.execute(
             "UPDATE scenarios SET title = ?, description = ?, category = ? WHERE id = ?",
@@ -308,6 +337,17 @@ def list_scenarios(category=None):
 def count_scenarios():
     with _connect() as conn:
         return conn.execute("SELECT COUNT(*) FROM scenarios").fetchone()[0]
+
+
+def list_scenario_categories():
+    """As categorias base de cenário (Linux/Kubernetes/OpenStack/Geral),
+    seguidas de quaisquer categorias novas que o utilizador tenha criado,
+    por ordem alfabética."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT DISTINCT category FROM scenarios").fetchall()
+    existing = {r["category"] for r in rows if r["category"]}
+    extra = sorted(existing - set(SCENARIO_CATEGORIES))
+    return SCENARIO_CATEGORIES + extra
 
 
 def search_scenarios(query, category=None):
