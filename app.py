@@ -28,6 +28,21 @@ CATEGORY_ICONS = {
     "Geral": "explore",
 }
 
+# o dialogo de detalhe de um cenario precisa de ser bem mais largo do que o
+# resto (para os comandos caberem numa linha só); a prop "full-width" do
+# Quasar nao estava a ter efeito visivel, por isso forca-se diretamente via
+# CSS o wrapper interno do q-dialog que tenha um cartao marcado com esta
+# classe — nao depende de nenhum comportamento interno do componente.
+ui.add_css(
+    """
+    .q-dialog__inner > div:has(.wide-scenario-dialog) {
+        width: 95vw !important;
+        max-width: 1400px !important;
+    }
+    """,
+    shared=True,
+)
+
 # mesma paleta de marca e mesmo mecanismo de tema (persistido por browser)
 # do Monitor de ETFs.
 BRAND_PRIMARY = "#2a78d6"
@@ -196,9 +211,9 @@ def open_scenario_detail(sc):
     db.mark_recent("scenario", sc["id"])
     full = db.get_scenario(sc["id"])
     with context.client.content:
-        dialog = ui.dialog().props("full-width")
+        dialog = ui.dialog()
     command_inputs = []
-    with dialog, ui.card().classes("w-full").style("max-width:1400px"):
+    with dialog, ui.card().classes("w-full wide-scenario-dialog"):
         ui.label(full["title"]).classes("text-lg font-bold")
         if full["description"]:
             ui.label(full["description"]).classes("text-sm opacity-70 mb-2")
