@@ -162,6 +162,24 @@ button.ghost {
     margin: 8px 0 0 2px; padding: 8px 0 8px 12px; border-left: 2px solid var(--border);
 }
 .step:first-of-type { margin-top: 10px; }
+.step-copy {
+    background: transparent; border: none; cursor: pointer; font-size: 0.85rem; color: var(--text-dim);
+    padding: 2px 4px; border-radius: 5px; line-height: 1; flex-shrink: 0;
+}
+.step-copy:hover { color: var(--text); background: var(--hover); }
+.tpl-vars {
+    display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 4px;
+    padding: 10px; border-radius: 8px; background: var(--code-bg);
+}
+.tpl-var-field { display: flex; flex-direction: column; gap: 3px; min-width: 140px; }
+.tpl-var-field label { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.02em; }
+.tpl-var-field input, .tpl-var-field select {
+    padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--card-bg); color: var(--text); font-family: inherit; font-size: 0.85rem;
+}
+.tpl-var-field input:focus, .tpl-var-field select:focus { outline: none; border-color: var(--primary); }
+.tpl-empty { color: var(--warning); border-bottom: 1px dashed var(--warning); }
+.tpl-filled { color: var(--accent); font-weight: 600; }
 .actions { display: flex; gap: 2px; flex-shrink: 0; }
 .actions button {
     background: transparent; border: none; cursor: pointer; font-size: 0.95rem; color: var(--text-dim);
@@ -261,6 +279,18 @@ dialog::backdrop { background: rgba(15,17,21,0.5); backdrop-filter: blur(2px); }
 </dialog>
 
 <dialog id="item-dialog"></dialog>
+
+<dialog id="paste-dialog">
+    <h3>Colar output do comando</h3>
+    <div class="form-row">
+        <label>Cola aqui o resultado (ex.: tabela do "openstack image list" ou "kubectl get pods")</label>
+        <textarea id="paste-textarea" rows="10" style="font-family:'JetBrains Mono',monospace;font-size:0.82rem"></textarea>
+    </div>
+    <div class="dialog-actions">
+        <button class="ghost" id="paste-cancel">Cancelar</button>
+        <button class="primary" id="paste-use">Criar lista</button>
+    </div>
+</dialog>
 
 <div id="toast"></div>
 

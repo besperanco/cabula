@@ -349,6 +349,80 @@ function renderBreadcrumb(count) {
     breadcrumb.innerHTML = `<b>${escapeHtml(currentLabel())}</b>${suffix}`;
 }
 
+// ---------------------------------------------------------------------
+// Variaveis {{nome}} nos passos dos playbooks
+// ---------------------------------------------------------------------
+
+const scenarioVarValues = {}; // { [scenarioId]: { [varName]: valorPreenchido } }
+const scenarioVarOptions = {}; // { [scenarioId]: { [varName]: [opcoes extraidas de um output colado] } }
+let pasteTarget = null; // { scenarioId, varName }
+
+// interpreta o output de comandos de tabela (OpenStack "+---+---+", kubectl
+// com colunas separadas por 2+ espacos) e devolve a lista de valores da
+// coluna mais provavel (procura uma coluna "Name"/"NAME"; senao usa a 2a
+// coluna nas tabelas OpenStack ou a 1a nas outras)
+function parseTableOutput(raw) {
+    const lines = raw.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim());
+    const pipeLines = lines.filter((l) => l.includes("|") && !/^\+[-+]+\+$/.test(l.trim()));
+
+    if (pipeLines.length >= 2) {
+        const rows = pipeLines.map((l) =>
+            l.split("|").map((c) => c.trim()).filter((c, i, arr) => !((i === 0 || i === arr.length - 1) && c === ""))
+        );
+        const header = rows[0].map((h) => h.toLowerCase());
+        let colIdx = header.indexOf("name");
+        if (colIdx === -1) colIdx = header.length > 1 ? 1 : 0;
+        return [...new Set(rows.slice(1).map((r) => r[colIdx]).filter(Boolean))];
+    }
+
+    const dataLines = lines.filter((l) => !l.trim().startsWith("$"));
+    if (dataLines.length < 2) return [];
+    const header = dataLines[0].trim().split(/\s{2,}/).map((h) => h.toLowerCase());
+    let colIdx = header.indexOf("name");
+    if (colIdx === -1) colIdx = 0;
+    return [...new Set(
+        dataLines.slice(1).map((l) => (l.trim().split(/\s{2,}/)[colIdx] || "").trim()).filter(Boolean)
+    )];
+}
+
+$("#paste-cancel").onclick = () => $("#paste-dialog").close();
+$("#paste-use").onclick = () => {
+    if (!pasteTarget) return;
+    const options = parseTableOutput($("#paste-textarea").value);
+    if (!options.length) {
+        toast("Não consegui identificar uma lista de valores nesse texto", true);
+        return;
+    }
+    const { scenarioId, varName } = pasteTarget;
+    scenarioVarOptions[scenarioId] = scenarioVarOptions[scenarioId] || {};
+    scenarioVarOptions[scenarioId][varName] = options;
+    scenarioVarValues[scenarioId] = scenarioVarValues[scenarioId] || {};
+    scenarioVarValues[scenarioId][varName] = options[0];
+    $("#paste-textarea").value = "";
+    $("#paste-dialog").close();
+    render();
+};
+
+function extractVars(text) {
+    const matches = (text || "").matchAll(/\{\{(\w+)\}\}/g);
+    return [...new Set([...matches].map((m) => m[1]))];
+}
+function prettifyVar(name) {
+    const s = name.replace(/_/g, " ");
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function renderTemplate(text, values) {
+    return escapeHtml(text).replace(/\{\{(\w+)\}\}/g, (match, name) => {
+        const val = values[name];
+        return val
+            ? `<span class="tpl-filled">${escapeHtml(val)}</span>`
+            : `<span class="tpl-empty">${match}</span>`;
+    });
+}
+function resolveTemplate(text, values) {
+    return (text || "").replace(/\{\{(\w+)\}\}/g, (match, name) => values[name] || match);
+}
+
 function matchesQuery(item, q) {
     if (!q) return true;
     q = q.toLowerCase();
@@ -385,6 +459,50 @@ function render() {
     listEl.querySelectorAll("[data-fav]").forEach((btn) => (btn.onclick = () => toggleFavorite(btn.dataset.fav, btn.dataset.kind)));
     listEl.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => onEdit(btn.dataset.edit)));
     listEl.querySelectorAll("[data-del]").forEach((btn) => (btn.onclick = () => onDelete(btn.dataset.del, btn.dataset.kind)));
+
+    listEl.querySelectorAll(".tpl-input, .tpl-select").forEach((inp) => {
+        inp.oninput = () => {
+            const sid = inp.dataset.scenario;
+            scenarioVarValues[sid] = scenarioVarValues[sid] || {};
+            scenarioVarValues[sid][inp.dataset.var] = inp.value;
+            updateScenarioCommands(sid);
+        };
+    });
+    listEl.querySelectorAll("[data-paste-var]").forEach((btn) => {
+        btn.onclick = () => {
+            pasteTarget = { scenarioId: btn.dataset.scenario, varName: btn.dataset.var };
+            $("#paste-dialog").showModal();
+        };
+    });
+    listEl.querySelectorAll("[data-clear-options]").forEach((btn) => {
+        btn.onclick = () => {
+            const sid = btn.dataset.scenario;
+            delete (scenarioVarOptions[sid] || {})[btn.dataset.var];
+            render();
+        };
+    });
+    listEl.querySelectorAll("[data-copy-scenario]").forEach((btn) => {
+        btn.onclick = () => {
+            const sid = btn.dataset.copyScenario;
+            const idx = Number(btn.dataset.copyIndex);
+            const scenario = state.items.find((i) => String(i.id) === String(sid));
+            const steps = (scenario?.scenario_steps || []).sort((a, b) => a.position - b.position);
+            const text = resolveTemplate(steps[idx]?.command || "", scenarioVarValues[sid] || {});
+            navigator.clipboard.writeText(text);
+            toast("Comando copiado");
+        };
+    });
+}
+
+function updateScenarioCommands(sid) {
+    const scenario = state.items.find((i) => String(i.id) === String(sid));
+    if (!scenario) return;
+    const steps = (scenario.scenario_steps || []).sort((a, b) => a.position - b.position);
+    const values = scenarioVarValues[sid] || {};
+    steps.forEach((s, idx) => {
+        const el = document.getElementById(`step-cmd-${sid}-${idx}`);
+        if (el) el.innerHTML = renderTemplate(s.command, values);
+    });
 }
 
 function renderCard(item) {
@@ -412,18 +530,52 @@ function renderCard(item) {
     }
     if (item._kind === "scenarios") {
         const steps = (item.scenario_steps || []).sort((a, b) => a.position - b.position);
+        const vars = [...new Set(steps.flatMap((s) => extractVars(s.command)))];
+        const values = scenarioVarValues[item.id] || {};
+
+        const varOptions = scenarioVarOptions[item.id] || {};
+        const varsPanel = vars.length
+            ? `<div class="tpl-vars">${vars
+                  .map((v) => {
+                      const options = varOptions[v];
+                      const field = options
+                          ? `<select class="tpl-select" data-scenario="${item.id}" data-var="${escapeAttr(v)}">
+                                ${options
+                                    .map(
+                                        (o) =>
+                                            `<option value="${escapeAttr(o)}" ${values[v] === o ? "selected" : ""}>${escapeHtml(o)}</option>`
+                                    )
+                                    .join("")}
+                            </select>
+                            <button class="step-copy" data-clear-options data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Voltar a texto livre">✕</button>`
+                          : `<input class="tpl-input" data-scenario="${item.id}" data-var="${escapeAttr(v)}"
+                               placeholder="${escapeAttr(v)}" value="${escapeAttr(values[v] || "")}">
+                            <button class="step-copy" data-paste-var data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Colar output e criar lista">📋</button>`;
+                      return `<div class="tpl-var-field">
+                        <label>${escapeHtml(prettifyVar(v))}</label>
+                        <div style="display:flex;align-items:center;gap:4px">${field}</div>
+                    </div>`;
+                  })
+                  .join("")}</div>`
+            : "";
+
         return `<div class="entry">
             <div class="entry-top">
                 <div class="entry-body">
                     <span class="badge">${icon} ${escapeHtml(item.category)}</span>
                     <div class="entry-title">${escapeHtml(item.title)}</div>
                     ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ""}
+                    ${varsPanel}
                     ${steps
                         .map(
-                            (s) =>
-                                `<div class="step"><span class="mono">${escapeHtml(s.command)}</span>${
-                                    s.note ? `<div class="desc">${escapeHtml(s.note)}</div>` : ""
-                                }</div>`
+                            (s, idx) =>
+                                `<div class="step">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <span class="mono step-cmd" id="step-cmd-${item.id}-${idx}">${renderTemplate(s.command, values)}</span>
+                                        ${s.command ? `<button class="step-copy" data-copy-scenario="${item.id}" data-copy-index="${idx}" title="Copiar">📋</button>` : ""}
+                                    </div>
+                                    ${s.note ? `<div class="desc">${escapeHtml(s.note)}</div>` : ""}
+                                </div>`
                         )
                         .join("")}
                 </div>
