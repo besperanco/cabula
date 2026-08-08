@@ -35,12 +35,14 @@ let state = {
     subcategory: "",
     expandedCategory: "",
     expandedPlaybooks: false,
+    expandedLinks: false,
     favoritesOnly: false,
     query: "",
     items: [],
     commandCategories: [],
     subcategoriesByCategory: {},
     scenarioCategories: [],
+    linkCategories: [],
     pin: sessionStorage.getItem("cabula_pin") || "",
 };
 
@@ -111,6 +113,11 @@ function togglePlaybooksExpand() {
     goTo("scenarios");
 }
 
+function toggleLinksExpand() {
+    state.expandedLinks = !state.expandedLinks;
+    goTo("links");
+}
+
 async function loadCommandCategories() {
     const { data, error } = await supabase.from("commands").select("category, subcategory");
     if (error) return { categories: [], byCategory: {} };
@@ -132,6 +139,12 @@ async function loadScenarioCategories() {
     return [...new Set(data.map((d) => d.category).filter(Boolean))].sort();
 }
 
+async function loadLinkCategories() {
+    const { data, error } = await supabase.from("links").select("category");
+    if (error) return [];
+    return [...new Set(data.map((d) => d.category).filter(Boolean))].sort();
+}
+
 function navItemHtml(key, icon, label, active, extraClass = "") {
     return `<li><button class="nav-item ${extraClass} ${active ? "active" : ""}" data-key="${key}">
         <span class="icon">${icon}</span><span>${escapeHtml(label)}</span>
@@ -148,7 +161,7 @@ function renderNavTree() {
     state.commandCategories.forEach((c) => {
         const isExpanded = state.expandedCategory === c;
         const isActive = !state.favoritesOnly && state.tab === "commands" && state.category === c && !state.subcategory;
-        html += navItemHtml(`cat-${c}`, iconFor(c), c, isActive || isExpanded);
+        html += navItemHtml(`cat-${c}`, iconFor(c), c, isActive, isExpanded ? "expanded" : "");
         handlers[`cat-${c}`] = () => toggleExpand(c);
 
         if (isExpanded) {
@@ -168,8 +181,21 @@ function renderNavTree() {
     html += navItemHtml("glossary", "📘", "Conceitos", !state.favoritesOnly && state.tab === "glossary");
     handlers.glossary = () => goTo("glossary");
 
+    const linksActive = !state.favoritesOnly && state.tab === "links" && !state.category;
+    html += navItemHtml("links", "🔗", "Links Úteis", linksActive, state.expandedLinks ? "expanded" : "");
+    handlers.links = toggleLinksExpand;
+    if (state.expandedLinks && state.linkCategories.length) {
+        html += `<li><ul class="nav-tree">`;
+        state.linkCategories.forEach((c) => {
+            const active = !state.favoritesOnly && state.tab === "links" && state.category === c;
+            html += navItemHtml(`lk-${c}`, iconFor(c), c, active, "sub");
+            handlers[`lk-${c}`] = () => goTo("links", c);
+        });
+        html += `</ul></li>`;
+    }
+
     const playbooksActive = !state.favoritesOnly && state.tab === "scenarios" && !state.category;
-    html += navItemHtml("scenarios", "🗂️", "Playbooks", playbooksActive || state.expandedPlaybooks);
+    html += navItemHtml("scenarios", "🗂️", "Playbooks", playbooksActive, state.expandedPlaybooks ? "expanded" : "");
     handlers.scenarios = togglePlaybooksExpand;
     if (state.expandedPlaybooks && state.scenarioCategories.length) {
         html += `<li><ul class="nav-tree">`;
@@ -317,16 +343,18 @@ async function doImport(file) {
 // Dados
 // ---------------------------------------------------------------------
 
-const TABLE_FOR_TAB = { commands: "commands", scenarios: "scenarios", glossary: "glossary" };
+const TABLE_FOR_TAB = { commands: "commands", scenarios: "scenarios", glossary: "glossary", links: "links" };
 
 async function refreshNav() {
-    const [{ categories, byCategory }, scenarioCategories] = await Promise.all([
+    const [{ categories, byCategory }, scenarioCategories, linkCategories] = await Promise.all([
         loadCommandCategories(),
         loadScenarioCategories(),
+        loadLinkCategories(),
     ]);
     state.commandCategories = categories;
     state.subcategoriesByCategory = byCategory;
     state.scenarioCategories = scenarioCategories;
+    state.linkCategories = linkCategories;
     renderNavTree();
 }
 
@@ -360,7 +388,8 @@ async function loadAndRender() {
 
     const table = TABLE_FOR_TAB[state.tab];
     let query = supabase.from(table).select(state.tab === "scenarios" ? "*, scenario_steps(*)" : "*");
-    const orderCol = state.tab === "commands" ? "command" : state.tab === "scenarios" ? "title" : "term";
+    const orderCol =
+        state.tab === "commands" ? "command" : state.tab === "scenarios" ? "title" : state.tab === "links" ? "title" : "term";
     query = query.order(orderCol);
     const { data, error } = await query;
     if (error) {
@@ -375,6 +404,7 @@ function currentLabel() {
     if (state.favoritesOnly) return "Favoritos";
     if (state.tab === "glossary") return "Conceitos";
     if (state.tab === "scenarios") return "Playbooks";
+    if (state.tab === "links") return "Links Úteis";
     if (state.tab === "subnet") return "Calculadora de Subnets";
     if (state.category && state.subcategory) return `${state.category} / ${state.subcategory}`;
     return state.category || "Home";
@@ -519,6 +549,9 @@ function matchesQuery(item, q) {
     if (item._kind === "scenarios") {
         const stepsText = (item.scenario_steps || []).map((s) => s.command + " " + s.note).join(" ");
         return [item.title, item.description, stepsText].some((f) => (f || "").toLowerCase().includes(q));
+    }
+    if (item._kind === "links") {
+        return [item.title, item.description, item.url].some((f) => (f || "").toLowerCase().includes(q));
     }
     return [item.term, item.definition].some((f) => (f || "").toLowerCase().includes(q));
 }
@@ -682,6 +715,26 @@ function renderCard(item) {
             </div>
         </div>`;
     }
+    if (item._kind === "links") {
+        return `<div class="entry">
+            <div class="entry-top">
+                <div class="entry-body">
+                    <span class="badge">${icon} ${escapeHtml(item.category)}</span>
+                    <div class="entry-title">
+                        <a href="${escapeAttr(item.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">
+                            ${escapeHtml(item.title)} ↗
+                        </a>
+                    </div>
+                    ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ""}
+                    <div class="tags-line">${escapeHtml(item.url)}</div>
+                </div>
+                <div class="actions">
+                    <button data-edit="${item.id}" title="Editar">✏️</button>
+                    <button data-del="${item.id}" data-kind="links" title="Apagar">🗑️</button>
+                </div>
+            </div>
+        </div>`;
+    }
     return `<div class="entry">
         <div class="entry-top">
             <div class="entry-body">
@@ -723,11 +776,11 @@ async function toggleFavorite(id, kind) {
 async function onDelete(id, kind) {
     if (!requirePin()) return;
     if (!confirm("Apagar este item?")) return;
-    const fn = { commands: "delete_command", scenarios: "delete_scenario", glossary: "delete_term" }[kind];
+    const fn = { commands: "delete_command", scenarios: "delete_scenario", glossary: "delete_term", links: "delete_link" }[kind];
     const { error } = await supabase.rpc(fn, { pin: state.pin, p_id: Number(id) });
     if (error) return toast(error.message, true);
     toast("Apagado");
-    if (kind === "commands" || kind === "scenarios") await refreshNav();
+    if (kind === "commands" || kind === "scenarios" || kind === "links") await refreshNav();
     loadAndRender();
 }
 
@@ -803,6 +856,17 @@ function buildFormHtml(item, kind) {
                 <button class="primary dialog-save" type="button">Guardar</button>
             </div>`;
     }
+    if (kind === "links") {
+        return `<h3>${title} link</h3>
+            <div class="form-row"><label>Título</label><input class="f-title" value="${escapeAttr(item?.title)}"></div>
+            <div class="form-row"><label>URL</label><input class="f-url" value="${escapeAttr(item?.url)}" placeholder="https://..."></div>
+            <div class="form-row"><label>Descrição</label><textarea class="f-description" rows="2">${escapeHtml(item?.description)}</textarea></div>
+            <div class="form-row"><label>Categoria</label><input class="f-category" value="${escapeAttr(item?.category || "Geral")}"></div>
+            <div class="dialog-actions">
+                <button class="ghost dialog-cancel" type="button">Cancelar</button>
+                <button class="primary dialog-save" type="button">Guardar</button>
+            </div>`;
+    }
     return `<h3>${title} termo</h3>
         <div class="form-row"><label>Termo</label><input class="f-term" value="${escapeAttr(item?.term)}"></div>
         <div class="form-row"><label>Definição</label><textarea class="f-definition" rows="3">${escapeHtml(item?.definition)}</textarea></div>
@@ -849,6 +913,17 @@ async function saveItem(item, kind, dlg) {
         const fn = item ? "update_scenario" : "add_scenario";
         const args = item ? { pin, p_id: item.id, ...payload } : { pin, ...payload };
         ({ error } = await supabase.rpc(fn, args));
+    } else if (kind === "links") {
+        const payload = {
+            p_title: dlg.querySelector(".f-title").value.trim(),
+            p_url: dlg.querySelector(".f-url").value.trim(),
+            p_description: dlg.querySelector(".f-description").value.trim(),
+            p_category: dlg.querySelector(".f-category").value.trim() || "Geral",
+        };
+        if (!payload.p_title || !payload.p_url) return toast("Título e URL são obrigatórios", true);
+        const fn = item ? "update_link" : "add_link";
+        const args = item ? { pin, p_id: item.id, ...payload } : { pin, ...payload };
+        ({ error } = await supabase.rpc(fn, args));
     } else {
         const payload = {
             p_term: dlg.querySelector(".f-term").value.trim(),
@@ -864,7 +939,7 @@ async function saveItem(item, kind, dlg) {
     if (error) return toast(error.message, true);
     dlg.close();
     toast("Guardado");
-    if (kind === "commands" || kind === "scenarios") await refreshNav();
+    if (kind === "commands" || kind === "scenarios" || kind === "links") await refreshNav();
     loadAndRender();
 }
 
