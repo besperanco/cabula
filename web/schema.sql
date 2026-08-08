@@ -24,6 +24,7 @@ create table if not exists commands (
     command text not null,
     description text not null,
     category text not null,
+    subcategory text not null default '',
     tags text not null default '',
     example text not null default '',
     notes text not null default '',
@@ -98,14 +99,15 @@ $$;
 
 create or replace function add_command(
     pin text, p_command text, p_description text, p_category text,
-    p_tags text default '', p_example text default '', p_notes text default ''
+    p_tags text default '', p_example text default '', p_notes text default '',
+    p_subcategory text default ''
 ) returns commands language plpgsql security definer as $$
 declare
     result commands;
 begin
     perform _check_pin(pin);
-    insert into commands (command, description, category, tags, example, notes)
-    values (p_command, p_description, p_category, p_tags, p_example, p_notes)
+    insert into commands (command, description, category, tags, example, notes, subcategory)
+    values (p_command, p_description, p_category, p_tags, p_example, p_notes, p_subcategory)
     returning * into result;
     return result;
 end;
@@ -113,14 +115,15 @@ $$;
 
 create or replace function update_command(
     pin text, p_id bigint, p_command text, p_description text, p_category text,
-    p_tags text default '', p_example text default '', p_notes text default ''
+    p_tags text default '', p_example text default '', p_notes text default '',
+    p_subcategory text default ''
 ) returns commands language plpgsql security definer as $$
 declare
     result commands;
 begin
     perform _check_pin(pin);
     update commands set command = p_command, description = p_description, category = p_category,
-        tags = p_tags, example = p_example, notes = p_notes
+        tags = p_tags, example = p_example, notes = p_notes, subcategory = p_subcategory
     where id = p_id
     returning * into result;
     return result;
