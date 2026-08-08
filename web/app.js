@@ -34,11 +34,13 @@ let state = {
     category: "",
     subcategory: "",
     expandedCategory: "",
+    expandedPlaybooks: false,
     favoritesOnly: false,
     query: "",
     items: [],
     commandCategories: [],
     subcategoriesByCategory: {},
+    scenarioCategories: [],
     pin: sessionStorage.getItem("cabula_pin") || "",
 };
 
@@ -104,6 +106,11 @@ function toggleExpand(category) {
     goTo("commands", category, "");
 }
 
+function togglePlaybooksExpand() {
+    state.expandedPlaybooks = !state.expandedPlaybooks;
+    goTo("scenarios");
+}
+
 async function loadCommandCategories() {
     const { data, error } = await supabase.from("commands").select("category, subcategory");
     if (error) return { categories: [], byCategory: {} };
@@ -117,6 +124,12 @@ async function loadCommandCategories() {
     const result = {};
     categories.forEach((c) => (result[c] = [...byCategory[c]].sort()));
     return { categories, byCategory: result };
+}
+
+async function loadScenarioCategories() {
+    const { data, error } = await supabase.from("scenarios").select("category");
+    if (error) return [];
+    return [...new Set(data.map((d) => d.category).filter(Boolean))].sort();
 }
 
 function navItemHtml(key, icon, label, active, extraClass = "") {
@@ -154,8 +167,20 @@ function renderNavTree() {
 
     html += navItemHtml("glossary", "📘", "Conceitos", !state.favoritesOnly && state.tab === "glossary");
     handlers.glossary = () => goTo("glossary");
-    html += navItemHtml("scenarios", "🗂️", "Playbooks", !state.favoritesOnly && state.tab === "scenarios");
-    handlers.scenarios = () => goTo("scenarios");
+
+    const playbooksActive = !state.favoritesOnly && state.tab === "scenarios" && !state.category;
+    html += navItemHtml("scenarios", "🗂️", "Playbooks", playbooksActive || state.expandedPlaybooks);
+    handlers.scenarios = togglePlaybooksExpand;
+    if (state.expandedPlaybooks && state.scenarioCategories.length) {
+        html += `<li><ul class="nav-tree">`;
+        state.scenarioCategories.forEach((c) => {
+            const active = !state.favoritesOnly && state.tab === "scenarios" && state.category === c;
+            html += navItemHtml(`sc-${c}`, iconFor(c), c, active, "sub");
+            handlers[`sc-${c}`] = () => goTo("scenarios", c);
+        });
+        html += `</ul></li>`;
+    }
+
     html += navItemHtml("subnet", "🧮", "Calc. de Subnets", !state.favoritesOnly && state.tab === "subnet");
     handlers.subnet = () => goTo("subnet");
     html += navItemHtml("favorites", "⭐", "Favoritos", state.favoritesOnly);
@@ -295,9 +320,13 @@ async function doImport(file) {
 const TABLE_FOR_TAB = { commands: "commands", scenarios: "scenarios", glossary: "glossary" };
 
 async function refreshNav() {
-    const { categories, byCategory } = await loadCommandCategories();
+    const [{ categories, byCategory }, scenarioCategories] = await Promise.all([
+        loadCommandCategories(),
+        loadScenarioCategories(),
+    ]);
     state.commandCategories = categories;
     state.subcategoriesByCategory = byCategory;
+    state.scenarioCategories = scenarioCategories;
     renderNavTree();
 }
 
@@ -698,7 +727,7 @@ async function onDelete(id, kind) {
     const { error } = await supabase.rpc(fn, { pin: state.pin, p_id: Number(id) });
     if (error) return toast(error.message, true);
     toast("Apagado");
-    if (kind === "commands") await refreshNav();
+    if (kind === "commands" || kind === "scenarios") await refreshNav();
     loadAndRender();
 }
 
@@ -835,7 +864,7 @@ async function saveItem(item, kind, dlg) {
     if (error) return toast(error.message, true);
     dlg.close();
     toast("Guardado");
-    if (kind === "commands") await refreshNav();
+    if (kind === "commands" || kind === "scenarios") await refreshNav();
     loadAndRender();
 }
 
