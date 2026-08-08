@@ -149,6 +149,8 @@ function renderNavTree() {
     handlers.glossary = () => goTo("glossary");
     html += navItemHtml("scenarios", "🗂️", "Playbooks", !state.favoritesOnly && state.tab === "scenarios");
     handlers.scenarios = () => goTo("scenarios");
+    html += navItemHtml("subnet", "🧮", "Calc. de Subnets", !state.favoritesOnly && state.tab === "subnet");
+    handlers.subnet = () => goTo("subnet");
     html += navItemHtml("favorites", "⭐", "Favoritos", state.favoritesOnly);
     handlers.favorites = goToFavorites;
 
@@ -160,6 +162,7 @@ function renderNavTree() {
 
 $("#search").oninput = (e) => {
     state.query = e.target.value;
+    if (state.tab === "subnet" && !state.favoritesOnly) return;
     render();
 };
 
@@ -294,7 +297,13 @@ async function refreshNav() {
 async function loadAndRender() {
     renderNavTree();
     listEl.innerHTML = '<p class="empty">A carregar...</p>';
-    $("#add-btn").style.display = state.favoritesOnly ? "none" : "";
+    $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" ? "none" : "";
+
+    if (state.tab === "subnet" && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        renderSubnetCalculator();
+        return;
+    }
 
     if (state.favoritesOnly) {
         const [cmds, scs] = await Promise.all([
@@ -330,12 +339,14 @@ function currentLabel() {
     if (state.favoritesOnly) return "Favoritos";
     if (state.tab === "glossary") return "Conceitos";
     if (state.tab === "scenarios") return "Playbooks";
+    if (state.tab === "subnet") return "Calculadora de Subnets";
     if (state.category && state.subcategory) return `${state.category} / ${state.subcategory}`;
     return state.category || "Home";
 }
 
 function renderBreadcrumb(count) {
-    breadcrumb.innerHTML = `<b>${escapeHtml(currentLabel())}</b> · ${count} ${count === 1 ? "item" : "itens"}`;
+    const suffix = count === null ? "" : ` · ${count} ${count === 1 ? "item" : "itens"}`;
+    breadcrumb.innerHTML = `<b>${escapeHtml(currentLabel())}</b>${suffix}`;
 }
 
 function matchesQuery(item, q) {
@@ -386,6 +397,8 @@ function renderCard(item) {
                     <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory) : ""}</span>
                     <div class="mono">${escapeHtml(item.command)}</div>
                     <div class="desc">${escapeHtml(item.description)}</div>
+                    ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${escapeHtml(item.example)}</div>` : ""}
+                    ${item.notes ? `<div class="desc" style="margin-top:6px">💡 ${escapeHtml(item.notes)}</div>` : ""}
                     ${item.tags ? `<div class="tags-line">🏷️ ${escapeHtml(item.tags)}</div>` : ""}
                 </div>
                 <div class="actions">
@@ -606,6 +619,172 @@ async function saveItem(item, kind, dlg) {
     toast("Guardado");
     if (kind === "commands") await refreshNav();
     loadAndRender();
+}
+
+// ---------------------------------------------------------------------
+// Calculadora de subnets IPv4
+// ---------------------------------------------------------------------
+
+function ipToInt(ip) {
+    const parts = ip.split(".");
+    if (parts.length !== 4 || parts.some((p) => !/^\d+$/.test(p) || Number(p) > 255)) return null;
+    return parts.reduce((acc, p) => (acc << 8) + Number(p), 0) >>> 0;
+}
+function intToIp(n) {
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+}
+function intToBinary(n) {
+    return n.toString(2).padStart(32, "0").match(/.{8}/g).join(".");
+}
+
+function maskForPrefix(prefix) {
+    return prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+}
+
+function cidrDetails(ip, prefix) {
+    const maskInt = maskForPrefix(prefix);
+    const wildcardInt = (~maskInt) >>> 0;
+    const network = (ip & maskInt) >>> 0;
+    const broadcast = (network | wildcardInt) >>> 0;
+    const totalAddresses = 2 ** (32 - prefix);
+    const usableHosts = prefix >= 31 ? 0 : totalAddresses - 2;
+    const firstHost = prefix >= 31 ? network : network + 1;
+    const lastHost = prefix >= 31 ? broadcast : broadcast - 1;
+    return {
+        prefix, network: intToIp(network), broadcast: intToIp(broadcast),
+        netmask: intToIp(maskInt), wildcard: intToIp(wildcardInt),
+        firstHost: intToIp(firstHost >>> 0), lastHost: intToIp(lastHost >>> 0),
+        totalAddresses, usableHosts,
+        networkBinary: intToBinary(network), maskBinary: intToBinary(maskInt),
+    };
+}
+
+// devolve a lista minima de blocos CIDR que cobre exatamente [start, end]
+// (algoritmo classico de "IP range to CIDR")
+function rangeToCidrs(start, end) {
+    const blocks = [];
+    while (end >= start) {
+        let maxSize = 32;
+        while (maxSize > 0) {
+            const mask = maskForPrefix(maxSize - 1);
+            if ((start & mask) >>> 0 !== start) break;
+            maxSize--;
+        }
+        const spanBits = Math.floor(Math.log2(end - start + 1));
+        const minPrefix = 32 - spanBits;
+        if (maxSize < minPrefix) maxSize = minPrefix;
+        blocks.push(`${intToIp(start)}/${maxSize}`);
+        start = (start + 2 ** (32 - maxSize)) >>> 0;
+        if (maxSize === 0) break;
+    }
+    return blocks;
+}
+
+// menor bloco CIDR unico que contem tanto `a` como `b`
+function smallestCidrContaining(a, b) {
+    const prefix = Math.clz32((a ^ b) >>> 0);
+    const network = (a & maskForPrefix(prefix)) >>> 0;
+    return { prefix, network };
+}
+
+function calculateSubnet(input) {
+    const raw = input.trim();
+
+    const rangeMatch = raw.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s*[-–]\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (rangeMatch) {
+        const start = ipToInt(rangeMatch[1]);
+        const end = ipToInt(rangeMatch[2]);
+        if (start === null || end === null) return { error: "IP inválido no intervalo." };
+        if (start > end) return { error: "O primeiro IP tem de ser menor (ou igual) ao segundo." };
+        const cidrs = rangeToCidrs(start, end);
+        const smallest = smallestCidrContaining(start, end);
+        return {
+            mode: "range",
+            rangeStart: intToIp(start), rangeEnd: intToIp(end),
+            totalAddresses: end - start + 1,
+            cidrs,
+            containing: `${intToIp(smallest.network)}/${smallest.prefix}`,
+            containingDetails: cidrDetails(start, smallest.prefix),
+        };
+    }
+
+    const cidrMatch = raw.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s*\/\s*(\d{1,2})$/);
+    if (!cidrMatch) {
+        return { error: "Formato inválido. Usa IP/CIDR (192.168.1.10/24) ou um intervalo (192.168.1.0 - 192.168.1.63)." };
+    }
+    const ip = ipToInt(cidrMatch[1]);
+    const prefix = Number(cidrMatch[2]);
+    if (ip === null) return { error: "IP inválido." };
+    if (prefix < 0 || prefix > 32) return { error: "Prefixo CIDR tem de estar entre 0 e 32." };
+    return { mode: "cidr", ip: cidrMatch[1], ...cidrDetails(ip, prefix) };
+}
+
+function resultRow(label, value) {
+    return `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span class="desc" style="margin:0">${label}</span><span class="mono" style="margin:0">${value}</span>
+    </div>`;
+}
+
+function renderSubnetCalculator() {
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">Calculadora de Subnets (IPv4)</div>
+                <div class="desc">
+                    IP com CIDR (ex.: 192.168.1.10/24) ou um intervalo de IPs
+                    (ex.: 192.168.1.0 - 192.168.1.63)
+                </div>
+                <div class="form-row" style="max-width:360px;margin-top:12px">
+                    <input id="subnet-input" placeholder="192.168.1.0 - 192.168.1.63" value="192.168.1.10/24">
+                </div>
+                <button class="primary" id="subnet-calc-btn" style="margin-top:4px">Calcular</button>
+                <div id="subnet-result" style="margin-top:16px"></div>
+            </div>
+        </div>`;
+
+    const run = () => {
+        const result = calculateSubnet($("#subnet-input").value);
+        const resultEl = $("#subnet-result");
+        if (result.error) {
+            resultEl.innerHTML = `<p class="desc" style="color:var(--negative)">${escapeHtml(result.error)}</p>`;
+            return;
+        }
+
+        if (result.mode === "range") {
+            const rows = [
+                resultRow("Intervalo", `${result.rangeStart} — ${result.rangeEnd}`),
+                resultRow("Total de endereços no intervalo", result.totalAddresses.toLocaleString("pt-PT")),
+                resultRow("Menor bloco CIDR que contém o intervalo", result.containing),
+                resultRow("Máscara desse bloco", result.containingDetails.netmask),
+            ];
+            resultEl.innerHTML =
+                rows.join("") +
+                `<div class="desc" style="margin-top:14px">Blocos CIDR que cobrem exatamente este intervalo:</div>` +
+                result.cidrs.map((c) => `<div class="mono" style="margin:4px 0">${c}</div>`).join("");
+            return;
+        }
+
+        const rows = [
+            resultRow("Endereço", `${result.ip}/${result.prefix}`),
+            resultRow("Endereço de rede", result.network),
+            resultRow("Máscara de sub-rede", result.netmask),
+            resultRow("Wildcard mask", result.wildcard),
+            resultRow("Endereço de broadcast", result.broadcast),
+            resultRow("Primeiro host utilizável", result.firstHost),
+            resultRow("Último host utilizável", result.lastHost),
+            resultRow("Total de endereços", result.totalAddresses.toLocaleString("pt-PT")),
+            resultRow("Hosts utilizáveis", result.usableHosts.toLocaleString("pt-PT")),
+            resultRow("Rede (binário)", result.networkBinary),
+            resultRow("Máscara (binário)", result.maskBinary),
+        ];
+        resultEl.innerHTML = rows.join("");
+    };
+
+    $("#subnet-calc-btn").onclick = run;
+    $("#subnet-input").onkeydown = (e) => {
+        if (e.key === "Enter") run();
+    };
+    run();
 }
 
 (async () => {
