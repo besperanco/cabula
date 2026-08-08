@@ -12,6 +12,13 @@ const CATEGORY_ICON = {
     Docker: "🐳", Redes: "🌐", Bash: "💻", Python: "🐍", Troubleshooting: "🔧",
 };
 const FALLBACK_ICONS = ["📄", "📦", "🔩", "🧩", "🗃️"];
+
+const COPY_ICON_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px">' +
+    '<rect x="9" y="9" width="13" height="13" rx="2"/>' +
+    '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
+    "</svg>";
 function iconFor(cat) {
     if (CATEGORY_ICON[cat]) return CATEGORY_ICON[cat];
     let h = 0;
@@ -44,9 +51,9 @@ function toast(msg, isError = false) {
     const el = $("#toast");
     el.textContent = msg;
     el.style.background = isError ? "var(--negative)" : "var(--primary)";
-    el.style.display = "block";
+    el.classList.add("show");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => (el.style.display = "none"), 2500);
+    toast._t = setTimeout(() => el.classList.remove("show"), 2500);
 }
 
 function requirePin() {
@@ -296,7 +303,7 @@ async function refreshNav() {
 
 async function loadAndRender() {
     renderNavTree();
-    listEl.innerHTML = '<p class="empty">A carregar...</p>';
+    listEl.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
     $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" ? "none" : "";
 
     if (state.tab === "subnet" && !state.favoritesOnly) {
@@ -411,6 +418,48 @@ function prettifyVar(name) {
     const s = name.replace(/_/g, " ");
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+const VAR_HINTS = {
+    nome_chave: "Nome que vais dar ao par de chaves SSH (é criado agora, não precisas de o consultar antes). Ex.: minha-chave.",
+    grupo_seguranca: "Nome do grupo de segurança (firewall). Consulta os existentes com 'openstack security group list', ou inventa um nome novo se estiveres a criar um.",
+    imagem: "Nome da imagem do sistema operativo a usar. Consulta com 'openstack image list' (usa o botão 📥 para colar o resultado e escolher).",
+    flavor: "Tamanho da instância (vCPUs/RAM/disco). Consulta com 'openstack flavor list'.",
+    rede: "Rede interna onde a instância vai ficar. Consulta com 'openstack network list'.",
+    rede_externa: "Rede externa/pública usada para o IP flutuante. Consulta com 'openstack network list' (normalmente chamada 'ext-net' ou 'public').",
+    nome_servidor: "Nome que a instância vai ter (à tua escolha, ou consulta as já existentes com 'openstack server list').",
+    ip_publico: "IP flutuante (público). Consulta os já reservados com 'openstack floating ip list', ou usa o que acabaste de criar.",
+    namespace: "Namespace do Kubernetes. Consulta com 'kubectl get namespaces'.",
+    nome_pod: "Nome exato do pod. Consulta com 'kubectl get pods' (ou 'kubectl get pods -A' para todos os namespaces).",
+    nome_no: "Nome exato do nó do cluster. Consulta com 'kubectl get nodes'.",
+    diretoria: "Caminho da pasta a verificar (ex.: /var/log). Ajusta consoante o que 'df -h' apontou como cheio.",
+    padrao: "Padrão de nome de ficheiro a procurar (ex.: *.log ou *.tmp).",
+    nome_arquivo: "Nome a dar ao ficheiro comprimido que vais criar (ex.: backup.tar.gz).",
+    pasta: "Caminho da pasta a arquivar/comprimir.",
+    caminho_a_apagar: "Caminho exato a remover. Confirma bem antes de correr — 'rm -rf' é irreversível.",
+    utilizador: "Utilizador remoto para a ligação SSH (ex.: ubuntu, root, azureuser).",
+    host: "IP ou nome do servidor a que te vais ligar.",
+    dominio: "Domínio a testar (ex.: exemplo.com).",
+    porta: "Número da porta de rede a verificar (ex.: 443, 22, 8080).",
+    servico: "Nome do serviço systemd (ex.: nginx, docker). Consulta com 'systemctl list-units --type=service'.",
+};
+function varHint(name) {
+    return VAR_HINTS[name] || `Substitui pelo valor real de "${prettifyVar(name).toLowerCase()}" antes de copiar o comando.`;
+}
+
+// so estas variaveis correspondem a um comando de listagem real (com uma
+// tabela de onde se consegue tirar valores) — as outras sao "inventadas"
+// pelo utilizador (nomes novos, caminhos, etc.) e nao tem output nenhum
+// para colar, por isso nao mostram o botao de colar output.
+const VAR_LIST_COMMAND = {
+    imagem: "openstack image list",
+    flavor: "openstack flavor list",
+    rede: "openstack network list",
+    rede_externa: "openstack network list",
+    ip_publico: "openstack floating ip list",
+    namespace: "kubectl get namespaces",
+    nome_pod: "kubectl get pods",
+    nome_no: "kubectl get nodes",
+};
 function renderTemplate(text, values) {
     return escapeHtml(text).replace(/\{\{(\w+)\}\}/g, (match, name) => {
         const val = values[name];
@@ -419,6 +468,15 @@ function renderTemplate(text, values) {
             : `<span class="tpl-empty">${match}</span>`;
     });
 }
+// realca em verde as partes entre aspas de um exemplo de comando (ex:
+// "ext-net"), que sao tipicamente o que o utilizador deve substituir
+function highlightEditable(text) {
+    return (text || "")
+        .split(/("[^"]*")/g)
+        .map((part) => (part.startsWith('"') && part.endsWith('"') ? `<span class="tpl-filled">${escapeHtml(part)}</span>` : escapeHtml(part)))
+        .join("");
+}
+
 function resolveTemplate(text, values) {
     return (text || "").replace(/\{\{(\w+)\}\}/g, (match, name) => values[name] || match);
 }
@@ -445,7 +503,7 @@ function render() {
     renderBreadcrumb(filtered.length);
 
     if (!filtered.length) {
-        listEl.innerHTML = '<p class="empty">Sem resultados.</p>';
+        listEl.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>Sem resultados.</div>';
         return;
     }
 
@@ -471,6 +529,10 @@ function render() {
     listEl.querySelectorAll("[data-paste-var]").forEach((btn) => {
         btn.onclick = () => {
             pasteTarget = { scenarioId: btn.dataset.scenario, varName: btn.dataset.var };
+            const suggestion = VAR_LIST_COMMAND[pasteTarget.varName];
+            $("#paste-suggestion").innerHTML = suggestion
+                ? `Corre <span class="mono" style="font-size:0.8rem">${escapeHtml(suggestion)}</span> e cola o resultado abaixo.`
+                : "";
             $("#paste-dialog").showModal();
         };
     });
@@ -515,12 +577,12 @@ function renderCard(item) {
                     <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory) : ""}</span>
                     <div class="mono">${escapeHtml(item.command)}</div>
                     <div class="desc">${escapeHtml(item.description)}</div>
-                    ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${escapeHtml(item.example)}</div>` : ""}
+                    ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${highlightEditable(item.example)}</div>` : ""}
                     ${item.notes ? `<div class="desc" style="margin-top:6px">💡 ${escapeHtml(item.notes)}</div>` : ""}
                     ${item.tags ? `<div class="tags-line">🏷️ ${escapeHtml(item.tags)}</div>` : ""}
                 </div>
                 <div class="actions">
-                    <button data-copy="${escapeAttr(item.command)}" title="Copiar">📋</button>
+                    <button data-copy="${escapeAttr(item.command)}" title="Copiar">${COPY_ICON_SVG}</button>
                     <button data-fav="${item.id}" data-kind="commands" title="Favorito">${favIcon}</button>
                     <button data-edit="${item.id}" title="Editar">✏️</button>
                     <button data-del="${item.id}" data-kind="commands" title="Apagar">🗑️</button>
@@ -547,13 +609,17 @@ function renderCard(item) {
                                     )
                                     .join("")}
                             </select>
-                            <button class="step-copy" data-clear-options data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Voltar a texto livre">✕</button>`
+                            <button class="tpl-control-btn" data-clear-options data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Voltar a texto livre">✕</button>`
                           : `<input class="tpl-input" data-scenario="${item.id}" data-var="${escapeAttr(v)}"
                                placeholder="${escapeAttr(v)}" value="${escapeAttr(values[v] || "")}">
-                            <button class="step-copy" data-paste-var data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Colar output e criar lista">📋</button>`;
+                            ${
+                                VAR_LIST_COMMAND[v]
+                                    ? `<button class="tpl-control-btn" data-paste-var data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Colar output e criar lista">📥</button>`
+                                    : ""
+                            }`;
                       return `<div class="tpl-var-field">
-                        <label>${escapeHtml(prettifyVar(v))}</label>
-                        <div style="display:flex;align-items:center;gap:4px">${field}</div>
+                        <label>${escapeHtml(prettifyVar(v))} <span class="tpl-hint" title="${escapeAttr(varHint(v))}">?</span></label>
+                        <div class="tpl-control">${field}</div>
                     </div>`;
                   })
                   .join("")}</div>`
@@ -572,7 +638,7 @@ function renderCard(item) {
                                 `<div class="step">
                                     <div style="display:flex;align-items:center;gap:6px">
                                         <span class="mono step-cmd" id="step-cmd-${item.id}-${idx}">${renderTemplate(s.command, values)}</span>
-                                        ${s.command ? `<button class="step-copy" data-copy-scenario="${item.id}" data-copy-index="${idx}" title="Copiar">📋</button>` : ""}
+                                        ${s.command ? `<button class="step-copy" data-copy-scenario="${item.id}" data-copy-index="${idx}" title="Copiar">${COPY_ICON_SVG}</button>` : ""}
                                     </div>
                                     ${s.note ? `<div class="desc">${escapeHtml(s.note)}</div>` : ""}
                                 </div>`
