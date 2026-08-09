@@ -728,6 +728,13 @@ function render() {
             if (btn.dataset.copyId) bumpUsage(btn.dataset.copyId);
         };
     });
+    listEl.querySelectorAll("[data-seealso]").forEach((btn) => {
+        btn.onclick = () => {
+            navigator.clipboard.writeText(btn.dataset.seealso);
+            toast("Comando copiado");
+            bumpUsage(btn.dataset.seealsoId);
+        };
+    });
     listEl.querySelectorAll("[data-fav]").forEach((btn) => (btn.onclick = () => toggleFavorite(btn.dataset.fav, btn.dataset.kind)));
     listEl.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => onEdit(btn.dataset.edit)));
     listEl.querySelectorAll("[data-del]").forEach((btn) => (btn.onclick = () => onDelete(btn.dataset.del, btn.dataset.kind)));
@@ -781,10 +788,18 @@ function updateScenarioCommands(sid) {
     });
 }
 
+function siblingCommands(item) {
+    if (!item.subcategory) return [];
+    return state.items.filter(
+        (i) => i._kind === "commands" && i.id !== item.id && i.category === item.category && i.subcategory === item.subcategory
+    );
+}
+
 function renderCard(item) {
     const icon = iconFor(item.category);
     const favIcon = item.favorite ? "⭐" : "☆";
     if (item._kind === "commands") {
+        const siblings = siblingCommands(item).slice(0, 6);
         return `<div class="entry">
             <div class="entry-top">
                 <div class="entry-body">
@@ -794,6 +809,16 @@ function renderCard(item) {
                     ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${highlightEditable(item.example)}</div>` : ""}
                     ${item.notes ? `<div class="desc" style="margin-top:6px">💡 ${escapeHtml(item.notes)}</div>` : ""}
                     ${item.tags ? `<div class="tags-line">🏷️ ${escapeHtml(item.tags)}</div>` : ""}
+                    ${
+                        siblings.length
+                            ? `<div class="see-also">👀 Ver também: ${siblings
+                                  .map(
+                                      (s) =>
+                                          `<button class="see-also-item" data-seealso="${escapeAttr(s.command)}" data-seealso-id="${s.id}">${escapeHtml(s.command)}</button>`
+                                  )
+                                  .join("")}</div>`
+                            : ""
+                    }
                 </div>
                 <div class="actions">
                     <button data-copy="${escapeAttr(item.command)}" data-copy-id="${item.id}" title="Copiar">${COPY_ICON_SVG}</button>

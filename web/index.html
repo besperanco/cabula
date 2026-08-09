@@ -201,6 +201,13 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
 .entry-title { font-size: 1rem; font-weight: 600; margin: 0 0 4px; }
 .desc { color: var(--text-dim); font-size: 0.87rem; margin-top: 4px; line-height: 1.5; }
 .tags-line { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; }
+.see-also { font-size: 0.78rem; color: var(--text-dim); margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.see-also-item {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 0.74rem;
+    background: var(--code-bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 8px; cursor: pointer; transition: color 0.12s, border-color 0.12s;
+}
+.see-also-item:hover { color: var(--text); border-color: var(--primary); }
 .step {
     margin: 8px 0 0 2px; padding: 8px 0 8px 12px; border-left: 2px solid var(--border);
 }
