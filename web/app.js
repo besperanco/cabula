@@ -34,6 +34,7 @@ let state = {
     category: "",
     subcategory: "",
     expandedCategory: "",
+    expandedSubcategory: "",
     expandedPlaybooks: false,
     expandedLinks: false,
     favoritesOnly: false,
@@ -105,7 +106,14 @@ function goToFavorites() {
 
 function toggleExpand(category) {
     state.expandedCategory = state.expandedCategory === category ? "" : category;
+    state.expandedSubcategory = "";
     goTo("commands", category, "");
+}
+
+function toggleSubExpand(category, subName) {
+    const key = `${category}::${subName}`;
+    state.expandedSubcategory = state.expandedSubcategory === key ? "" : key;
+    goTo("commands", category, subName);
 }
 
 function togglePlaybooksExpand() {
@@ -118,18 +126,28 @@ function toggleLinksExpand() {
     goTo("links");
 }
 
+// Uma subcategoria pode ter um "/" para indicar um 2º nivel (ex:
+// "Rede/Floating" agrupa tudo o que é sobre IPs flutuantes dentro de
+// "Rede"). Sem "/" fica ao nivel de topo, como sempre.
 async function loadCommandCategories() {
     const { data, error } = await supabase.from("commands").select("category, subcategory");
     if (error) return { categories: [], byCategory: {} };
     const byCategory = {};
     data.forEach((d) => {
         if (!d.category) return;
-        if (!byCategory[d.category]) byCategory[d.category] = new Set();
-        if (d.subcategory) byCategory[d.category].add(d.subcategory);
+        if (!byCategory[d.category]) byCategory[d.category] = new Map();
+        if (!d.subcategory) return;
+        const [parent, child] = d.subcategory.split("/").map((s) => s.trim());
+        const map = byCategory[d.category];
+        if (!map.has(parent)) map.set(parent, new Set());
+        if (child) map.get(parent).add(child);
     });
     const categories = Object.keys(byCategory).sort();
     const result = {};
-    categories.forEach((c) => (result[c] = [...byCategory[c]].sort()));
+    categories.forEach((c) => {
+        const map = byCategory[c];
+        result[c] = [...map.keys()].sort().map((name) => ({ name, children: [...map.get(name)].sort() }));
+    });
     return { categories, byCategory: result };
 }
 
@@ -168,10 +186,32 @@ function renderNavTree() {
             const subs = state.subcategoriesByCategory[c] || [];
             if (subs.length) {
                 html += `<li><ul class="nav-tree">`;
-                subs.forEach((sc) => {
-                    const active = state.tab === "commands" && state.category === c && state.subcategory === sc;
-                    html += navItemHtml(`sub-${c}-${sc}`, "—", sc, active, "sub");
-                    handlers[`sub-${c}-${sc}`] = () => goTo("commands", c, sc);
+                subs.forEach((sub) => {
+                    const hasChildren = sub.children.length > 0;
+                    const subActive = state.tab === "commands" && state.category === c && state.subcategory === sub.name;
+                    const subKey = `${c}::${sub.name}`;
+                    const subExpanded = state.expandedSubcategory === subKey;
+                    html += navItemHtml(
+                        `sub-${c}-${sub.name}`,
+                        "—",
+                        sub.name,
+                        subActive,
+                        `sub${hasChildren && subExpanded ? " expanded" : ""}`
+                    );
+                    handlers[`sub-${c}-${sub.name}`] = hasChildren
+                        ? () => toggleSubExpand(c, sub.name)
+                        : () => goTo("commands", c, sub.name);
+
+                    if (hasChildren && subExpanded) {
+                        html += `<li><ul class="nav-tree">`;
+                        sub.children.forEach((child) => {
+                            const fullPath = `${sub.name}/${child}`;
+                            const childActive = state.tab === "commands" && state.category === c && state.subcategory === fullPath;
+                            html += navItemHtml(`sub-${c}-${sub.name}-${child}`, "—", child, childActive, "sub");
+                            handlers[`sub-${c}-${sub.name}-${child}`] = () => goTo("commands", c, fullPath);
+                        });
+                        html += `</ul></li>`;
+                    }
                 });
                 html += `</ul></li>`;
             }
@@ -406,7 +446,7 @@ function currentLabel() {
     if (state.tab === "scenarios") return "Playbooks";
     if (state.tab === "links") return "Links Úteis";
     if (state.tab === "subnet") return "Calculadora de Subnets";
-    if (state.category && state.subcategory) return `${state.category} / ${state.subcategory}`;
+    if (state.category && state.subcategory) return `${state.category} / ${state.subcategory.split("/").join(" / ")}`;
     return state.category || "Home";
 }
 
@@ -559,7 +599,12 @@ function matchesQuery(item, q) {
 function render() {
     const filtered = state.items
         .filter((i) => !state.category || i.category === state.category)
-        .filter((i) => !state.subcategory || i.subcategory === state.subcategory)
+        .filter(
+            (i) =>
+                !state.subcategory ||
+                i.subcategory === state.subcategory ||
+                (i.subcategory || "").startsWith(state.subcategory + "/")
+        )
         .filter((i) => matchesQuery(i, state.query));
 
     renderBreadcrumb(filtered.length);
@@ -636,7 +681,7 @@ function renderCard(item) {
         return `<div class="entry">
             <div class="entry-top">
                 <div class="entry-body">
-                    <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory) : ""}</span>
+                    <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory.split("/").join(" / ")) : ""}</span>
                     <div class="mono">${escapeHtml(item.command)}</div>
                     <div class="desc">${escapeHtml(item.description)}</div>
                     ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${highlightEditable(item.example)}</div>` : ""}
@@ -832,7 +877,7 @@ function buildFormHtml(item, kind) {
             <div class="form-row"><label>Comando</label><input class="f-command" value="${escapeAttr(item?.command)}"></div>
             <div class="form-row"><label>Descrição</label><input class="f-description" value="${escapeAttr(item?.description)}"></div>
             <div class="form-row"><label>Categoria</label><input class="f-category" value="${escapeAttr(item?.category || "Linux")}"></div>
-            <div class="form-row"><label>Subcategoria (opcional)</label><input class="f-subcategory" value="${escapeAttr(item?.subcategory)}"></div>
+            <div class="form-row"><label>Subcategoria (opcional)</label><input class="f-subcategory" placeholder="ex: Rede/Floating para um 2º nível" value="${escapeAttr(item?.subcategory)}"></div>
             <div class="form-row"><label>Tags</label><input class="f-tags" value="${escapeAttr(item?.tags)}"></div>
             <div class="form-row"><label>Exemplo</label><textarea class="f-example" rows="2">${escapeHtml(item?.example)}</textarea></div>
             <div class="form-row"><label>Notas</label><textarea class="f-notes" rows="2">${escapeHtml(item?.notes)}</textarea></div>

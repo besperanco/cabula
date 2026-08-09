@@ -87,15 +87,22 @@ update commands set subcategory = 'Agendamento' where category = 'Linux' and com
 update commands set subcategory = 'Instâncias' where category = 'OpenStack' and command in
     ('openstack server create', 'openstack server delete', 'openstack server list', 'openstack server reboot',
      'openstack server show', 'openstack server start', 'openstack server stop',
-     'openstack server add floating ip', 'openstack server add volume');
+     'openstack server add volume', 'openstack server resize');
 update commands set subcategory = 'Rede' where category = 'OpenStack' and command in
     ('openstack network create', 'openstack network list', 'openstack subnet create', 'openstack router create',
-     'openstack router set --external-gateway', 'openstack floating ip create', 'openstack floating ip list',
-     'openstack security group create', 'openstack security group rule create');
+     'openstack router set --external-gateway',
+     'openstack security group create', 'openstack security group rule create',
+     'openstack security group list', 'openstack security group rule list');
+-- "Rede/Floating" e um 2º nivel dentro de "Rede" (subcategoria no formato
+-- "Pai/Filho") — agrupa tudo o que e sobre IPs flutuantes.
+update commands set subcategory = 'Rede/Floating' where category = 'OpenStack' and command in
+    ('openstack floating ip create', 'openstack floating ip list', 'openstack server add floating ip');
 update commands set subcategory = 'Storage' where category = 'OpenStack' and command in
     ('openstack volume create', 'openstack volume list');
 update commands set subcategory = 'Identidade' where category = 'OpenStack' and command in
     ('openstack project create', 'openstack project list', 'openstack user list', 'openstack token issue', 'source openrc.sh');
 update commands set subcategory = 'Imagens' where category = 'OpenStack' and command in
-    ('openstack image create', 'openstack image list', 'openstack flavor list', 'openstack keypair create');
+    ('openstack image create', 'openstack image list', 'openstack image show', 'openstack image delete',
+     'openstack flavor list', 'openstack flavor create', 'openstack flavor show', 'openstack flavor delete',
+     'openstack keypair create');
 update commands set subcategory = 'Orquestração' where category = 'OpenStack' and command in ('openstack stack list');
