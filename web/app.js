@@ -52,6 +52,14 @@ const listEl = $("#list");
 const navTree = $("#nav-tree");
 const breadcrumb = $("#breadcrumb");
 
+// Regista que um comando foi copiado (usado para ordenar a Home pelos mais
+// usados). Best-effort: nao bloqueia a copia nem mostra erro se falhar.
+function bumpUsage(id) {
+    supabase.rpc("increment_command_usage", { p_id: Number(id) }).then(() => {});
+    const item = state.items.find((i) => String(i.id) === String(id));
+    if (item) item.usage_count = (item.usage_count || 0) + 1;
+}
+
 function toast(msg, isError = false) {
     const el = $("#toast");
     el.textContent = msg;
@@ -269,6 +277,93 @@ $("#add-btn").onclick = () => {
     openItemDialog(null);
 };
 
+// ---------------------------------------------------------------------
+// Command palette (Ctrl/Cmd+K) — pesquisa rapida de comandos por cima da
+// pagina, sem ter de ir ate a barra lateral.
+// ---------------------------------------------------------------------
+
+let paletteCommands = null; // cache da 1ª abertura; refeito a cada load da pagina
+let paletteResults = [];
+let paletteActiveIndex = 0;
+
+async function openPalette() {
+    const input = $("#palette-input");
+    input.value = "";
+    if (!paletteCommands) {
+        const { data } = await supabase.from("commands").select("id, command, description, category, subcategory, tags");
+        paletteCommands = data || [];
+    }
+    renderPaletteResults("");
+    $("#palette-dialog").showModal();
+    input.focus();
+}
+
+function renderPaletteResults(q) {
+    q = q.toLowerCase().trim();
+    const byRelevance = (a, b) => (b.usage_count || 0) - (a.usage_count || 0);
+    paletteResults = (
+        !q
+            ? [...paletteCommands].sort(byRelevance)
+            : paletteCommands.filter((c) => [c.command, c.description, c.tags].some((f) => (f || "").toLowerCase().includes(q))).sort(byRelevance)
+    ).slice(0, 30);
+    paletteActiveIndex = 0;
+    const el = $("#palette-results");
+    if (!paletteResults.length) {
+        el.innerHTML = '<div class="palette-empty">Sem resultados.</div>';
+        return;
+    }
+    el.innerHTML = paletteResults
+        .map(
+            (c, i) => `<button class="palette-item${i === 0 ? " active" : ""}" data-idx="${i}">
+                <div class="mono">${escapeHtml(c.command)}</div>
+                <div class="desc">${escapeHtml(c.description)}</div>
+            </button>`
+        )
+        .join("");
+    el.querySelectorAll(".palette-item").forEach((btn) => {
+        btn.onclick = () => selectPaletteItem(Number(btn.dataset.idx));
+    });
+}
+
+function movePaletteActive(delta) {
+    if (!paletteResults.length) return;
+    paletteActiveIndex = (paletteActiveIndex + delta + paletteResults.length) % paletteResults.length;
+    const items = $("#palette-results").querySelectorAll(".palette-item");
+    items.forEach((el, i) => el.classList.toggle("active", i === paletteActiveIndex));
+    items[paletteActiveIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+function selectPaletteItem(idx) {
+    const item = paletteResults[idx];
+    if (!item) return;
+    navigator.clipboard.writeText(item.command);
+    toast("Comando copiado");
+    bumpUsage(item.id);
+    $("#palette-dialog").close();
+    state.expandedCategory = item.category;
+    goTo("commands", item.category, item.subcategory || "");
+}
+
+document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        openPalette();
+    }
+});
+$("#palette-input").oninput = (e) => renderPaletteResults(e.target.value);
+$("#palette-input").onkeydown = (e) => {
+    if (e.key === "ArrowDown") {
+        e.preventDefault();
+        movePaletteActive(1);
+    } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        movePaletteActive(-1);
+    } else if (e.key === "Enter") {
+        e.preventDefault();
+        selectPaletteItem(paletteActiveIndex);
+    }
+};
+
 $("#menu-toggle").onclick = () => {
     $("#sidebar").classList.add("open");
     $("#sidebar-backdrop").classList.add("open");
@@ -430,8 +525,19 @@ async function loadAndRender() {
     let query = supabase.from(table).select(state.tab === "scenarios" ? "*, scenario_steps(*)" : "*");
     const orderCol =
         state.tab === "commands" ? "command" : state.tab === "scenarios" ? "title" : state.tab === "links" ? "title" : "term";
-    query = query.order(orderCol);
-    const { data, error } = await query;
+    // Na Home (sem categoria escolhida) mostra primeiro o que é mais usado,
+    // em vez de uma lista alfabética gigante sem sinal nenhum de relevância.
+    if (state.tab === "commands" && !state.category) {
+        query = query.order("usage_count", { ascending: false, nullsFirst: false }).order(orderCol);
+    } else {
+        query = query.order(orderCol);
+    }
+    let { data, error } = await query;
+    if (error && state.tab === "commands" && !state.category) {
+        // provavelmente a coluna usage_count ainda nao foi migrada no Supabase;
+        // tenta outra vez sem ordenar por ela em vez de mostrar erro na Home.
+        ({ data, error } = await supabase.from(table).select("*").order(orderCol));
+    }
     if (error) {
         listEl.innerHTML = `<p class="empty">Erro a carregar: ${error.message}</p>`;
         return;
@@ -619,6 +725,7 @@ function render() {
         btn.onclick = () => {
             navigator.clipboard.writeText(btn.dataset.copy);
             toast("Comando copiado");
+            if (btn.dataset.copyId) bumpUsage(btn.dataset.copyId);
         };
     });
     listEl.querySelectorAll("[data-fav]").forEach((btn) => (btn.onclick = () => toggleFavorite(btn.dataset.fav, btn.dataset.kind)));
@@ -681,7 +788,7 @@ function renderCard(item) {
         return `<div class="entry">
             <div class="entry-top">
                 <div class="entry-body">
-                    <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory.split("/").join(" / ")) : ""}</span>
+                    <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory.split("/").join(" / ")) : ""}</span>${item.usage_count ? `<span class="usage-count" title="Vezes copiado">🔥 ${item.usage_count}×</span>` : ""}
                     <div class="mono">${escapeHtml(item.command)}</div>
                     <div class="desc">${escapeHtml(item.description)}</div>
                     ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${highlightEditable(item.example)}</div>` : ""}
@@ -689,7 +796,7 @@ function renderCard(item) {
                     ${item.tags ? `<div class="tags-line">🏷️ ${escapeHtml(item.tags)}</div>` : ""}
                 </div>
                 <div class="actions">
-                    <button data-copy="${escapeAttr(item.command)}" title="Copiar">${COPY_ICON_SVG}</button>
+                    <button data-copy="${escapeAttr(item.command)}" data-copy-id="${item.id}" title="Copiar">${COPY_ICON_SVG}</button>
                     <button data-fav="${item.id}" data-kind="commands" title="Favorito">${favIcon}</button>
                     <button data-edit="${item.id}" title="Editar">✏️</button>
                     <button data-del="${item.id}" data-kind="commands" title="Apagar">🗑️</button>
