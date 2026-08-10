@@ -29,6 +29,8 @@ CATEGORY_ICONS = {
     "Linux": "terminal",
     "Kubernetes": "hub",
     "OpenStack": "cloud",
+    "Nova": "memory",
+    "Neutron": "router",
     "Geral": "explore",
 }
 
