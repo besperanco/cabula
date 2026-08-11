@@ -1374,9 +1374,13 @@ function buildHeatTemplate() {
     const lines = [];
     const push = (indent, text) => lines.push("  ".repeat(indent) + text);
 
+    push(0, "# Versao da linguagem HOT (Heat Orchestration Template) usada neste ficheiro.");
     push(0, "heat_template_version: 2015-10-15");
+    push(0, "# Descricao livre da stack — aparece no Horizon e no 'openstack stack show'.");
     push(0, `description: ${heatYamlString(v.descricao || "Stack gerado pelo Cábula")}`);
     push(0, "");
+    push(0, "# Cada bloco abaixo e um recurso da OpenStack a criar. 'get_resource: X' referencia");
+    push(0, "# outro recurso deste ficheiro pelo seu nome — assim o Heat sabe a ordem de criacao.");
     push(0, "resources:");
 
     const hasNetwork = s.network && v.nome_rede.trim();
@@ -1386,6 +1390,8 @@ function buildHeatTemplate() {
     let wroteAny = false;
 
     if (hasNetwork) {
+        push(1, "# Rede virtual isolada (equivalente logico a uma VLAN) onde vao viver as");
+        push(1, "# sub-redes e instancias abaixo.");
         push(1, "rede:");
         push(2, "type: OS::Neutron::Net");
         push(2, "properties:");
@@ -1395,6 +1401,8 @@ function buildHeatTemplate() {
     }
 
     if (hasSubnet) {
+        push(1, "# Sub-rede dentro da rede acima: define o bloco de enderecos IP (CIDR) que");
+        push(1, "# vai ser atribuido as instancias ligadas a esta rede.");
         push(1, "sub_rede:");
         push(2, "type: OS::Neutron::Subnet");
         push(2, "properties:");
@@ -1407,6 +1415,9 @@ function buildHeatTemplate() {
     }
 
     if (hasRouter) {
+        push(1, "# Router: liga a rede interna a rede externa indicada em");
+        push(1, "# 'external_gateway_info', permitindo saida para fora (e, mais abaixo,");
+        push(1, "# a associacao de IPs flutuantes).");
         push(1, "router:");
         push(2, "type: OS::Neutron::Router");
         push(2, "properties:");
@@ -1417,6 +1428,8 @@ function buildHeatTemplate() {
         wroteAny = true;
 
         if (hasSubnet) {
+            push(1, "# Liga o router a sub-rede criada acima — sem isto o router existe mas");
+            push(1, "# nao encaminha trafego de/para essa sub-rede.");
             push(1, "router_interface:");
             push(2, "type: OS::Neutron::RouterInterface");
             push(2, "properties:");
@@ -1431,6 +1444,8 @@ function buildHeatTemplate() {
         for (let idx = 0; idx < count; idx++) {
             const key = `server${idx + 1}`;
             const name = (v.instanceNames[idx] || "").trim() || `servidor-${idx + 1}`;
+            push(1, `# Instancia (VM) ${idx + 1}: criada a partir da imagem e do flavor`);
+            push(1, "# escolhidos, ligada a rede definida acima.");
             push(1, `${key}:`);
             push(2, "type: OS::Nova::Server");
             push(2, "properties:");
@@ -1443,12 +1458,15 @@ function buildHeatTemplate() {
             wroteAny = true;
 
             if (v.floatingIp && hasRouter) {
+                push(1, "# IP publico (flutuante) reservado na rede externa do router, para dar");
+                push(1, "# acesso a esta instancia a partir de fora.");
                 push(1, `ip_flutuante_${idx + 1}:`);
                 push(2, "type: OS::Neutron::FloatingIP");
                 push(2, "properties:");
                 push(3, `floating_network: ${heatYamlString(v.rede_externa)}`);
                 push(0, "");
 
+                push(1, "# Associa o IP flutuante acima a esta instancia especifica.");
                 push(1, `associar_ip_${idx + 1}:`);
                 push(2, "type: OS::Nova::FloatingIPAssociation");
                 push(2, "properties:");
@@ -1459,7 +1477,10 @@ function buildHeatTemplate() {
         }
     }
 
-    if (!wroteAny) push(1, "{}");
+    if (!wroteAny) {
+        push(1, "# Marca pelo menos uma opcao acima (Rede, Sub-rede, Router ou Instancia(s)).");
+        push(1, "{}");
+    }
     if (lines[lines.length - 1] === "") lines.pop();
     return lines.join("\n") + "\n";
 }
