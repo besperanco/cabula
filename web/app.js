@@ -637,6 +637,35 @@ let pasteTarget = null; // { scenarioId, varName }
 // de clicar no titulo do cartao. Guarda os IDs que o utilizador expandiu.
 const expandedScenarioCards = new Set();
 
+// ---------------------------------------------------------------------
+// Modo checklist nos playbooks: marcar passos como feitos, com progresso
+// guardado no localStorage (por playbook), para sobreviver a um reload a
+// meio de uma intervencao.
+// ---------------------------------------------------------------------
+
+const scenarioStepsDone = {}; // { [scenarioId]: Set(indices de passos concluidos) } — cache em memoria
+function loadStepsDone(scenarioId) {
+    if (scenarioStepsDone[scenarioId]) return scenarioStepsDone[scenarioId];
+    let set = new Set();
+    try {
+        const raw = localStorage.getItem(`cabula_steps_${scenarioId}`);
+        if (raw) set = new Set(JSON.parse(raw));
+    } catch {
+        set = new Set();
+    }
+    scenarioStepsDone[scenarioId] = set;
+    return set;
+}
+function saveStepsDone(scenarioId, set) {
+    scenarioStepsDone[scenarioId] = set;
+    try {
+        localStorage.setItem(`cabula_steps_${scenarioId}`, JSON.stringify([...set]));
+    } catch {
+        // localStorage indisponivel (modo privado, quota, etc.) — falha em silencio,
+        // o checklist so deixa de persistir entre reloads, nao bloqueia o uso.
+    }
+}
+
 // interpreta o output de comandos de tabela (OpenStack "+---+---+", kubectl
 // com colunas separadas por 2+ espacos) e devolve a lista de valores da
 // coluna mais provavel (procura uma coluna "Name"/"NAME"; senao usa a 2a
@@ -845,6 +874,31 @@ function render() {
             render();
         };
     });
+    listEl.querySelectorAll("[data-step-toggle]").forEach((btn) => {
+        btn.onclick = () => {
+            const sid = btn.dataset.scenario;
+            const idx = Number(btn.dataset.stepIdx);
+            const set = loadStepsDone(sid);
+            if (set.has(idx)) set.delete(idx);
+            else set.add(idx);
+            saveStepsDone(sid, set);
+            render();
+        };
+    });
+    listEl.querySelectorAll("[data-reset-steps]").forEach((btn) => {
+        btn.onclick = () => {
+            const sid = btn.dataset.resetSteps;
+            saveStepsDone(sid, new Set());
+            render();
+        };
+    });
+    listEl.querySelectorAll("[data-share]").forEach((btn) => {
+        btn.onclick = () => {
+            const url = `${location.origin}${location.pathname}?kind=${btn.dataset.shareKind}&id=${btn.dataset.share}`;
+            navigator.clipboard.writeText(url);
+            toast("Link copiado");
+        };
+    });
 
     listEl.querySelectorAll(".tpl-input, .tpl-select").forEach((inp) => {
         inp.oninput = () => {
@@ -929,6 +983,7 @@ function renderCard(item) {
                 </div>
                 <div class="actions">
                     <button data-copy="${escapeAttr(item.command)}" data-copy-id="${item.id}" title="Copiar">${COPY_ICON_SVG}</button>
+                    <button data-share="${item.id}" data-share-kind="commands" title="Copiar link direto">🔗</button>
                     <button data-fav="${item.id}" data-kind="commands" title="Favorito">${favIcon}</button>
                     <button data-edit="${item.id}" title="Editar">✏️</button>
                     <button data-del="${item.id}" data-kind="commands" title="Apagar">🗑️</button>
@@ -972,6 +1027,10 @@ function renderCard(item) {
                   .join("")}</div>`
             : "";
 
+        const doneSet = loadStepsDone(item.id);
+        const doneCount = steps.reduce((n, _, idx) => n + (doneSet.has(idx) ? 1 : 0), 0);
+        const progressPct = steps.length ? Math.round((doneCount / steps.length) * 100) : 0;
+
         return `<div class="entry">
             <div class="entry-top">
                 <div class="entry-body">
@@ -979,28 +1038,43 @@ function renderCard(item) {
                     <button class="entry-title scenario-toggle" data-toggle-scenario="${item.id}" style="background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;gap:6px;text-align:left;color:inherit;font:inherit">
                         <span style="display:inline-block;transition:transform 0.15s;transform:rotate(${expanded ? "90deg" : "0deg"})">▸</span>
                         ${escapeHtml(item.title)}
-                        <span class="desc" style="margin:0;font-weight:400">(${steps.length} ${steps.length === 1 ? "passo" : "passos"})</span>
+                        <span class="desc" style="margin:0;font-weight:400">(${steps.length} ${steps.length === 1 ? "passo" : "passos"}${doneCount ? ` · ${doneCount} feito${doneCount === 1 ? "" : "s"}` : ""})</span>
                     </button>
                     ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ""}
                     ${
                         expanded
-                            ? `${varsPanel}
+                            ? `${
+                                  steps.length
+                                      ? `<div class="step-progress">
+                                    <div class="step-progress-bar"><div class="step-progress-fill" style="width:${progressPct}%"></div></div>
+                                    <span>${doneCount}/${steps.length}</span>
+                                    ${doneCount ? `<button class="step-reset" data-reset-steps="${item.id}">Reiniciar</button>` : ""}
+                                </div>`
+                                      : ""
+                              }
+                    ${varsPanel}
                     ${steps
-                        .map(
-                            (s, idx) =>
-                                `<div class="step">
+                        .map((s, idx) => {
+                            const done = doneSet.has(idx);
+                            return `<div class="step${done ? " step-done" : ""}">
                                     <div style="display:flex;align-items:center;gap:6px">
+                                        ${
+                                            s.command
+                                                ? `<button class="step-check" data-step-toggle data-scenario="${item.id}" data-step-idx="${idx}" title="${done ? "Marcar como por fazer" : "Marcar como feito"}">${done ? "✅" : "⬜"}</button>`
+                                                : ""
+                                        }
                                         <span class="mono step-cmd" id="step-cmd-${item.id}-${idx}">${renderTemplate(s.command, values)}</span>
                                         ${s.command ? `<button class="step-copy" data-copy-scenario="${item.id}" data-copy-index="${idx}" title="Copiar">${COPY_ICON_SVG}</button>` : ""}
                                     </div>
                                     ${s.note ? `<div class="desc">${escapeHtml(s.note)}</div>` : ""}
-                                </div>`
-                        )
+                                </div>`;
+                        })
                         .join("")}`
                             : ""
                     }
                 </div>
                 <div class="actions">
+                    <button data-share="${item.id}" data-share-kind="scenarios" title="Copiar link direto">🔗</button>
                     <button data-fav="${item.id}" data-kind="scenarios" title="Favorito">${favIcon}</button>
                     <button data-edit="${item.id}" title="Editar">✏️</button>
                     <button data-del="${item.id}" data-kind="scenarios" title="Apagar">🗑️</button>
@@ -1022,6 +1096,7 @@ function renderCard(item) {
                     <div class="tags-line">${escapeHtml(item.url)}</div>
                 </div>
                 <div class="actions">
+                    <button data-share="${item.id}" data-share-kind="links" title="Copiar link direto">🔗</button>
                     <button data-edit="${item.id}" title="Editar">✏️</button>
                     <button data-del="${item.id}" data-kind="links" title="Apagar">🗑️</button>
                 </div>
@@ -1036,6 +1111,7 @@ function renderCard(item) {
                 <div class="desc">${escapeHtml(item.definition)}</div>
             </div>
             <div class="actions">
+                <button data-share="${item.id}" data-share-kind="glossary" title="Copiar link direto">🔗</button>
                 <button data-edit="${item.id}" title="Editar">✏️</button>
                 <button data-del="${item.id}" data-kind="glossary" title="Apagar">🗑️</button>
             </div>
@@ -1818,7 +1894,48 @@ function renderHeatGenerator() {
     };
 }
 
+// ---------------------------------------------------------------------
+// Link direto para um comando/playbook (?kind=commands&id=42), criado
+// pelo botao 🔗 de cada cartao — abre logo na categoria certa e destaca
+// o item, sem o utilizador ter de o procurar manualmente.
+// ---------------------------------------------------------------------
+
+async function openDeepLink() {
+    const params = new URLSearchParams(location.search);
+    const kind = params.get("kind");
+    const id = params.get("id");
+    if (!kind || !id || !TABLE_FOR_TAB[kind]) return false;
+
+    const { data } = await supabase.from(TABLE_FOR_TAB[kind]).select("*").eq("id", id).maybeSingle();
+    if (!data) return false;
+
+    if (kind === "scenarios") expandedScenarioCards.add(String(id));
+    state.favoritesOnly = false;
+    state.tab = kind;
+    state.category = data.category || "";
+    state.subcategory = data.subcategory || "";
+    state.expandedCategory = data.category || "";
+    if (kind === "scenarios") state.expandedPlaybooks = true;
+    if (kind === "links") state.expandedLinks = true;
+
+    await loadAndRender();
+    highlightSharedCard(id);
+    return true;
+}
+
+function highlightSharedCard(id) {
+    // data-del existe em todos os tipos de cartao (commands/scenarios/links/glossary),
+    // ao contrario de data-fav (so commands/scenarios) — marcador mais fiavel aqui.
+    const marker = listEl.querySelector(`[data-del="${id}"]`);
+    const card = marker?.closest(".entry");
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("highlight-pulse");
+    setTimeout(() => card.classList.remove("highlight-pulse"), 2000);
+}
+
 (async () => {
     await refreshNav();
-    await loadAndRender();
+    const opened = await openDeepLink();
+    if (!opened) await loadAndRender();
 })();

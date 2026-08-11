@@ -243,6 +243,25 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
     padding: 2px 4px; border-radius: 5px; line-height: 1; flex-shrink: 0;
 }
 .step-copy:hover { color: var(--text); background: var(--hover); }
+.step-check {
+    background: transparent; border: none; cursor: pointer; font-size: 0.9rem; line-height: 1;
+    padding: 0; flex-shrink: 0;
+}
+.step.step-done { border-left-color: var(--accent); }
+.step.step-done .step-cmd { opacity: 0.55; text-decoration: line-through; }
+.step-progress { display: flex; align-items: center; gap: 9px; margin: 10px 0 2px; font-size: 0.78rem; color: var(--text-dim); }
+.step-progress-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--code-bg); overflow: hidden; }
+.step-progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width 0.2s; }
+.step-reset {
+    background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.74rem;
+    text-decoration: underline; padding: 0; font-family: inherit;
+}
+.step-reset:hover { color: var(--text); }
+@keyframes highlight-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent); }
+    50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 25%, transparent); }
+}
+.highlight-pulse { animation: highlight-pulse 1s ease-in-out 2; border-color: var(--primary) !important; }
 .tpl-vars {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
     gap: 12px 14px; margin: 12px 0 6px; padding: 14px; border-radius: 10px; background: var(--code-bg);
