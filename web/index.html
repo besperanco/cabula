@@ -4,24 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cábula</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236d5ef8'/%3E%3Cstop offset='1' stop-color='%231baf7a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' font-weight='700' fill='white' text-anchor='middle'%3E%3E_%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-    --primary: #4a9eff;
+    --primary: #6d5ef8;
     --accent: #1baf7a;
     --negative: #e05a5a;
     --warning: #c98500;
-    --bg: #0f1115;
-    --sidebar-bg: #131519;
-    --card-bg: #181a21;
+    --bg: #0d0e12;
+    --sidebar-bg: #111219;
+    --card-bg: #15161d;
     --text: #e8e9ec;
     --text-dim: #8a8f98;
-    --border: #262931;
-    --hover: #1e212a;
-    --code-bg: #1f222b;
+    --border: #24262f;
+    --hover: #1c1e27;
+    --code-bg: #1a1b23;
     --shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 @media (prefers-color-scheme: light) {
@@ -46,7 +46,10 @@ html { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 body {
     margin: 0;
     font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--bg);
+    background:
+        linear-gradient(color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+        linear-gradient(90deg, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+        var(--bg);
     color: var(--text);
     -webkit-font-smoothing: antialiased;
 }
@@ -147,16 +150,18 @@ body {
 #search:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
 .search-kbd {
     position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none;
-    font-size: 0.68rem; color: var(--text-dim); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
-    font-family: inherit;
+    font-size: 0.68rem; font-weight: 600; color: var(--text-dim);
+    background: var(--code-bg); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px;
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
 }
 @media (max-width: 820px) { .search-kbd { display: none; } }
 button.primary {
     background: var(--primary); color: white; border: none;
     border-radius: 9px; padding: 9px 16px; cursor: pointer; font-size: 0.88rem; font-weight: 500;
-    font-family: inherit; white-space: nowrap; transition: filter 0.15s, transform 0.1s;
+    font-family: inherit; white-space: nowrap; transition: filter 0.15s, transform 0.1s, box-shadow 0.15s;
 }
-button.primary:hover { filter: brightness(1.1); }
+button.primary:hover { filter: brightness(1.1); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent); }
 button.primary:active { transform: scale(0.97); }
 button.ghost {
     background: transparent; border: 1px solid var(--border); color: var(--text);
@@ -171,32 +176,50 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
 
 /* ---------- Entry cards (wiki-article feel) ---------- */
 .entry {
+    position: relative;
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 16px 18px;
+    padding: 16px 18px 16px 22px;
     margin-bottom: 12px;
     box-shadow: var(--shadow);
     transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
     animation: entry-in 0.2s ease both;
+    overflow: hidden;
+}
+.entry::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(var(--primary), var(--accent));
+    opacity: 0; transition: opacity 0.15s;
 }
 .entry:hover {
     border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    box-shadow: 0 4px 20px color-mix(in srgb, var(--primary) 10%, rgba(0,0,0,0.15));
     transform: translateY(-1px);
 }
+.entry:hover::before { opacity: 1; }
 @keyframes entry-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .entry-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .entry-body { flex: 1; min-width: 0; }
 .badge {
     display: inline-block; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
     padding: 2px 8px; border-radius: 5px;
-    background: var(--code-bg); color: var(--text-dim); margin-bottom: 6px;
+    background: color-mix(in srgb, var(--primary) 14%, var(--code-bg));
+    color: color-mix(in srgb, var(--primary) 65%, var(--text-dim));
+    border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
+    margin-bottom: 6px;
 }
 .mono {
     font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 0.9rem;
     background: var(--code-bg); padding: 6px 10px; border-radius: 6px; display: inline-block;
     word-break: break-all; margin: 2px 0;
+}
+/* prompt "$" nos blocos de comando principais (nao nos chips pequenos tipo
+   "ver tambem" ou pre-visualizacoes na command palette) — da o ar de
+   terminal sem exigir alterar o markup gerado pelo app.js */
+.entry-body > .mono::before,
+.step .mono::before {
+    content: "❯ "; color: var(--accent); font-weight: 700;
 }
 .entry-title { font-size: 1rem; font-weight: 600; margin: 0 0 4px; }
 .desc { color: var(--text-dim); font-size: 0.87rem; margin-top: 4px; line-height: 1.5; }
