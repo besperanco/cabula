@@ -1605,7 +1605,10 @@ function renderHeatGenerator() {
     });
     const countInput = listEl.querySelector("[data-heat-count]");
     if (countInput) {
-        countInput.onchange = () => {
+        // "oninput" (nao "onchange") para reagir logo enquanto se escreve —
+        // com "onchange" so atualizava ao perder o foco, o que parecia que a
+        // opcao de varias instancias nao existia.
+        countInput.oninput = () => {
             const n = Math.max(1, Math.min(20, Number(countInput.value) || 1));
             v.instanceCount = n;
             while (v.instanceNames.length < n) v.instanceNames.push(`servidor-${v.instanceNames.length + 1}`);
