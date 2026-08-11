@@ -1320,7 +1320,7 @@ const HEAT_GEN_PASTE_TARGET = "__heat__";
 
 const HEAT_VAR_LIST_COMMAND = {
     rede_existente: "openstack network list",
-    rede_externa: "openstack network list",
+    rede_externa: "openstack network list --external",
     imagem: "openstack image list",
     flavor: "openstack flavor list",
 };
@@ -1384,8 +1384,9 @@ function buildHeatTemplate() {
         push(2, "type: OS::Neutron::Subnet");
         push(2, "properties:");
         push(3, `name: ${heatYamlString(v.nome_subnet)}`);
-        push(3, `network: ${networkRef}`);
+        push(3, `network_id: ${networkRef}`);
         push(3, `cidr: ${heatYamlString(v.cidr)}`);
+        push(3, "ip_version: 4");
         push(0, "");
         wroteAny = true;
     }
@@ -1404,7 +1405,7 @@ function buildHeatTemplate() {
             push(1, "router_interface:");
             push(2, "type: OS::Neutron::RouterInterface");
             push(2, "properties:");
-            push(3, "router: { get_resource: router }");
+            push(3, "router_id: { get_resource: router }");
             push(3, "subnet: { get_resource: sub_rede }");
             push(0, "");
         }
@@ -1519,7 +1520,7 @@ function renderHeatGenerator() {
     if (s.router) {
         fieldsHtml += `<div class="tpl-vars">
             ${heatFieldWrap("Nome do router", "Nome a dar ao router.", heatTextField("nome_router", "meu-router"))}
-            ${heatFieldWrap("Rede externa", "Rede externa/pública para o gateway do router (ex.: ext-net).", heatPasteField("rede_externa", "ext-net"))}
+            ${heatFieldWrap("Rede externa", "Rede externa/pública para o gateway do router. Confirma que existe mesmo com 'openstack network list --external' antes de correr a stack.", heatPasteField("rede_externa", "ext-net"))}
         </div>`;
     }
 
