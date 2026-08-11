@@ -274,6 +274,7 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
 .tpl-control-btn:hover { color: var(--text); background: var(--hover); }
 .tpl-empty { color: var(--warning); border-bottom: 1px dashed var(--warning); }
 .tpl-filled { color: var(--accent); font-weight: 600; }
+.tpl-flag { color: color-mix(in srgb, var(--primary) 70%, var(--text-dim)); }
 .actions { display: flex; gap: 2px; flex-shrink: 0; }
 .actions button {
     background: transparent; border: none; cursor: pointer; font-size: 0.95rem; color: var(--text-dim);
@@ -285,12 +286,16 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
     display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
 .empty .empty-icon { font-size: 1.8rem; opacity: 0.5; }
-.spinner {
-    width: 22px; height: 22px; margin: 0 auto; border-radius: 50%;
-    border: 2.5px solid var(--border); border-top-color: var(--primary);
-    animation: spin 0.7s linear infinite;
+.empty-code {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 0.95rem;
+    color: var(--text-dim); opacity: 0.75;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+.term-loading {
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 1.3rem;
+    color: var(--text-dim);
+}
+.term-loading .cursor-blink { color: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 
 /* ---------- Dialogs ---------- */
 dialog {
@@ -333,7 +338,10 @@ dialog.palette-dialog {
 .palette-item:hover, .palette-item.active { background: var(--hover); }
 .palette-item .mono { margin: 0 0 2px; font-size: 0.85rem; padding: 2px 6px; }
 .palette-item .desc { margin: 0; font-size: 0.78rem; }
-.palette-empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: 0.85rem; }
+.palette-empty {
+    padding: 26px; text-align: center; color: var(--text-dim); font-size: 0.85rem; opacity: 0.75;
+    font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+}
 .palette-hint { padding: 8px 16px; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--text-dim); }
 .usage-count { margin-left: 8px; font-size: 0.68rem; color: var(--text-dim); }
 
