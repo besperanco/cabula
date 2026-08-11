@@ -1413,7 +1413,7 @@ function buildHeatTemplate() {
     if (s.instances) {
         const count = Math.max(1, Math.min(20, Number(v.instanceCount) || 1));
         for (let idx = 0; idx < count; idx++) {
-            const key = `instancia_${idx + 1}`;
+            const key = `server${idx + 1}`;
             const name = (v.instanceNames[idx] || "").trim() || `servidor-${idx + 1}`;
             push(1, `${key}:`);
             push(2, "type: OS::Nova::Server");
