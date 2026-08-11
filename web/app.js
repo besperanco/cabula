@@ -1332,6 +1332,8 @@ const heatGenState = {
     instances: false,
     values: {
         descricao: "Stack gerado pelo Cábula",
+        ficheiro: "stack.yaml",
+        nome_stack: "minha-stack",
         nome_rede: "",
         nome_subnet: "",
         cidr: "192.168.100.0/24",
@@ -1346,6 +1348,19 @@ const heatGenState = {
     },
     pasteOptions: {},
 };
+
+function heatFileName() {
+    return heatGenState.values.ficheiro.trim() || "stack.yaml";
+}
+function heatStackName() {
+    return heatGenState.values.nome_stack.trim() || "minha-stack";
+}
+function heatCreateCmd() {
+    return `openstack stack create -t ${heatFileName()} ${heatStackName()}`;
+}
+function heatDryRunCmd() {
+    return `openstack stack create --dry-run --template ${heatFileName()} ${heatStackName()}`;
+}
 
 function heatYamlString(val) {
     // aspas duplas escapadas: valido tanto em YAML "flow scalar" como para
@@ -1501,6 +1516,8 @@ function renderHeatGenerator() {
 
     let fieldsHtml = `<div class="tpl-vars">
         ${heatFieldWrap("Descrição do stack", "Fica na linha 'description' do template.", heatTextField("descricao", "Stack gerado pelo Cábula"))}
+        ${heatFieldWrap("Nome do ficheiro", "Nome a dar ao ficheiro .yaml quando o descarregares.", heatTextField("ficheiro", "stack.yaml"))}
+        ${heatFieldWrap("Nome da stack", "Nome a dar à stack ao correr 'openstack stack create'.", heatTextField("nome_stack", "minha-stack"))}
     </div>`;
 
     if (s.network) {
@@ -1555,7 +1572,7 @@ function renderHeatGenerator() {
                 <div class="entry-title">Gerar Stack (YAML) — OpenStack Heat</div>
                 <div class="desc">
                     Marca o que queres criar. O template é gerado em baixo, pronto para
-                    <span class="mono" style="padding:1px 6px">openstack stack create -t ficheiro.yaml nome-da-stack</span>.
+                    <span class="mono" id="heat-create-cmd" style="padding:1px 6px">${escapeHtml(heatCreateCmd())}</span>.
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:16px;margin:16px 0">
                     ${heatCheckboxHtml("network", "Rede (Network)")}
@@ -1573,7 +1590,7 @@ function renderHeatGenerator() {
                     Antes de criar a stack a sério, valida o template (não cria nada, só verifica):
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
-                    <span class="mono" id="heat-dryrun-cmd" style="flex:1">openstack stack create --dry-run --template stack.yaml teste</span>
+                    <span class="mono" id="heat-dryrun-cmd" style="flex:1">${escapeHtml(heatDryRunCmd())}</span>
                     <button class="tpl-control-btn" id="heat-copy-dryrun" title="Copiar comando" style="border:1px solid var(--border);border-radius:7px">${COPY_ICON_SVG}</button>
                 </div>
             </div>
@@ -1582,6 +1599,10 @@ function renderHeatGenerator() {
     const refreshOutput = () => {
         const pre = $("#heat-output");
         if (pre) pre.textContent = buildHeatTemplate();
+        const createCmd = $("#heat-create-cmd");
+        if (createCmd) createCmd.textContent = heatCreateCmd();
+        const dryrunCmd = $("#heat-dryrun-cmd");
+        if (dryrunCmd) dryrunCmd.textContent = heatDryRunCmd();
     };
 
     listEl.querySelectorAll("[data-heat-toggle]").forEach((el) => {
@@ -1652,7 +1673,7 @@ function renderHeatGenerator() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "stack.yaml";
+        a.download = heatFileName();
         a.click();
         URL.revokeObjectURL(url);
     };
