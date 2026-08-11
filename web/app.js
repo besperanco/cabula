@@ -315,7 +315,7 @@ function renderPaletteResults(q) {
     paletteActiveIndex = 0;
     const el = $("#palette-results");
     if (!paletteResults.length) {
-        el.innerHTML = '<div class="palette-empty">Sem resultados.</div>';
+        el.innerHTML = '<div class="palette-empty">// nada encontrado</div>';
         return;
     }
     el.innerHTML = paletteResults
@@ -501,7 +501,7 @@ async function refreshNav() {
 
 async function loadAndRender() {
     renderNavTree();
-    listEl.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+    listEl.innerHTML = '<div class="empty"><div class="term-loading">❯ <span class="cursor-blink">_</span></div></div>';
     const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
     $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" || isHeatGenerator ? "none" : "";
 
@@ -523,7 +523,7 @@ async function loadAndRender() {
             supabase.from("scenarios").select("*, scenario_steps(*)").eq("favorite", true).order("title"),
         ]);
         if (cmds.error || scs.error) {
-            listEl.innerHTML = `<p class="empty">Erro a carregar favoritos.</p>`;
+            listEl.innerHTML = `<div class="empty"><div class="empty-code">// erro ao carregar favoritos</div></div>`;
             return;
         }
         state.items = [
@@ -552,7 +552,7 @@ async function loadAndRender() {
         ({ data, error } = await supabase.from(table).select("*").order(orderCol));
     }
     if (error) {
-        listEl.innerHTML = `<p class="empty">Erro a carregar: ${error.message}</p>`;
+        listEl.innerHTML = `<div class="empty"><div class="empty-code">// erro ao carregar: ${escapeHtml(error.message)}</div></div>`;
         return;
     }
     state.items = data.map((i) => ({ ...i, _kind: state.tab }));
@@ -697,20 +697,37 @@ const VAR_LIST_COMMAND = {
     subrede: "openstack subnet list",
     router: "openstack router list",
 };
-function renderTemplate(text, values) {
-    return escapeHtml(text).replace(/\{\{(\w+)\}\}/g, (match, name) => {
-        const val = values[name];
-        return val
-            ? `<span class="tpl-filled">${escapeHtml(val)}</span>`
-            : `<span class="tpl-empty">${match}</span>`;
-    });
+// realca flags (--proto, -v, etc.) num texto ja escapado para HTML — exige
+// que a "-" venha logo a seguir a um espaco ou ao inicio, para nao apanhar
+// travessoes dentro de palavras (ex: "m1.custom" fica intacto).
+function highlightFlags(escapedText) {
+    return escapedText.replace(/(^|\s)(--?[A-Za-z][\w-]*)/g, (m, pre, flag) => `${pre}<span class="tpl-flag">${flag}</span>`);
 }
-// realca em verde as partes entre aspas de um exemplo de comando (ex:
-// "ext-net"), que sao tipicamente o que o utilizador deve substituir
+
+function renderTemplate(text, values) {
+    return (text || "")
+        .split(/("[^"]*")/g)
+        .map((part) => {
+            if (part.startsWith('"') && part.endsWith('"')) {
+                return `<span class="tpl-filled">${escapeHtml(part)}</span>`;
+            }
+            const withVars = escapeHtml(part).replace(/\{\{(\w+)\}\}/g, (match, name) => {
+                const val = values[name];
+                return val
+                    ? `<span class="tpl-filled">${escapeHtml(val)}</span>`
+                    : `<span class="tpl-empty">${match}</span>`;
+            });
+            return highlightFlags(withVars);
+        })
+        .join("");
+}
+// realca em verde as partes entre aspas de um comando/exemplo (ex: "ext-net"),
+// tipicamente o que o utilizador deve substituir, e as flags (--proto, -v)
+// num tom mais discreto — da uma leitura mais rapida tipo syntax highlighting.
 function highlightEditable(text) {
     return (text || "")
         .split(/("[^"]*")/g)
-        .map((part) => (part.startsWith('"') && part.endsWith('"') ? `<span class="tpl-filled">${escapeHtml(part)}</span>` : escapeHtml(part)))
+        .map((part) => (part.startsWith('"') && part.endsWith('"') ? `<span class="tpl-filled">${escapeHtml(part)}</span>` : highlightFlags(escapeHtml(part))))
         .join("");
 }
 
@@ -748,7 +765,7 @@ function render() {
     renderBreadcrumb(filtered.length);
 
     if (!filtered.length) {
-        listEl.innerHTML = '<div class="empty"><span class="empty-icon">🔍</span>Sem resultados.</div>';
+        listEl.innerHTML = '<div class="empty"><div class="empty-code">// nada encontrado</div></div>';
         return;
     }
 
@@ -844,7 +861,7 @@ function renderCard(item) {
             <div class="entry-top">
                 <div class="entry-body">
                     <span class="badge">${icon} ${escapeHtml(item.category)}${item.subcategory ? " / " + escapeHtml(item.subcategory.split("/").join(" / ")) : ""}</span>${item.usage_count ? `<span class="usage-count" title="Vezes copiado">🔥 ${item.usage_count}×</span>` : ""}
-                    <div class="mono">${escapeHtml(item.command)}</div>
+                    <div class="mono">${highlightEditable(item.command)}</div>
                     <div class="desc">${escapeHtml(item.description)}</div>
                     ${item.example ? `<div class="mono" style="margin-top:6px;font-size:0.82rem">${highlightEditable(item.example)}</div>` : ""}
                     ${item.notes ? `<div class="desc" style="margin-top:6px">💡 ${escapeHtml(item.notes)}</div>` : ""}
