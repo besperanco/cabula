@@ -583,6 +583,10 @@ const scenarioVarValues = {}; // { [scenarioId]: { [varName]: valorPreenchido } 
 const scenarioVarOptions = {}; // { [scenarioId]: { [varName]: [opcoes extraidas de um output colado] } }
 let pasteTarget = null; // { scenarioId, varName }
 
+// playbooks (cenarios) colapsados por defeito — os passos so aparecem depois
+// de clicar no titulo do cartao. Guarda os IDs que o utilizador expandiu.
+const expandedScenarioCards = new Set();
+
 // interpreta o output de comandos de tabela (OpenStack "+---+---+", kubectl
 // com colunas separadas por 2+ espacos) e devolve a lista de valores da
 // coluna mais provavel (procura uma coluna "Name"/"NAME"; senao usa a 2a
@@ -766,6 +770,14 @@ function render() {
     listEl.querySelectorAll("[data-fav]").forEach((btn) => (btn.onclick = () => toggleFavorite(btn.dataset.fav, btn.dataset.kind)));
     listEl.querySelectorAll("[data-edit]").forEach((btn) => (btn.onclick = () => onEdit(btn.dataset.edit)));
     listEl.querySelectorAll("[data-del]").forEach((btn) => (btn.onclick = () => onDelete(btn.dataset.del, btn.dataset.kind)));
+    listEl.querySelectorAll("[data-toggle-scenario]").forEach((btn) => {
+        btn.onclick = () => {
+            const id = btn.dataset.toggleScenario;
+            if (expandedScenarioCards.has(id)) expandedScenarioCards.delete(id);
+            else expandedScenarioCards.add(id);
+            render();
+        };
+    });
 
     listEl.querySelectorAll(".tpl-input, .tpl-select").forEach((inp) => {
         inp.oninput = () => {
@@ -861,6 +873,7 @@ function renderCard(item) {
         const steps = (item.scenario_steps || []).sort((a, b) => a.position - b.position);
         const vars = [...new Set(steps.flatMap((s) => extractVars(s.command)))];
         const values = scenarioVarValues[item.id] || {};
+        const expanded = expandedScenarioCards.has(String(item.id));
 
         const varOptions = scenarioVarOptions[item.id] || {};
         const varsPanel = vars.length
@@ -896,9 +909,15 @@ function renderCard(item) {
             <div class="entry-top">
                 <div class="entry-body">
                     <span class="badge">${icon} ${escapeHtml(item.category)}</span>
-                    <div class="entry-title">${escapeHtml(item.title)}</div>
+                    <button class="entry-title scenario-toggle" data-toggle-scenario="${item.id}" style="background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;gap:6px;text-align:left;color:inherit;font:inherit">
+                        <span style="display:inline-block;transition:transform 0.15s;transform:rotate(${expanded ? "90deg" : "0deg"})">▸</span>
+                        ${escapeHtml(item.title)}
+                        <span class="desc" style="margin:0;font-weight:400">(${steps.length} ${steps.length === 1 ? "passo" : "passos"})</span>
+                    </button>
                     ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ""}
-                    ${varsPanel}
+                    ${
+                        expanded
+                            ? `${varsPanel}
                     ${steps
                         .map(
                             (s, idx) =>
@@ -910,7 +929,9 @@ function renderCard(item) {
                                     ${s.note ? `<div class="desc">${escapeHtml(s.note)}</div>` : ""}
                                 </div>`
                         )
-                        .join("")}
+                        .join("")}`
+                            : ""
+                    }
                 </div>
                 <div class="actions">
                     <button data-fav="${item.id}" data-kind="scenarios" title="Favorito">${favIcon}</button>
