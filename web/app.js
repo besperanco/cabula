@@ -7,9 +7,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Categoria "falsa" dentro de Playbooks: nao vem da BD, e um gerador de
+// template Heat da OpenStack (rede/sub-rede/router/instancias) tratado a
+// parte, tal como a Calculadora de Subnets e a sua propria tab sintetica.
+const HEAT_GENERATOR_CATEGORY_LABEL = "Gerar Stack (YAML)";
+
 const CATEGORY_ICON = {
     Linux: "🐧", Kubernetes: "☸️", OpenStack: "☁️", Geral: "🧭",
     Docker: "🐳", Redes: "🌐", Bash: "💻", Python: "🐍", Troubleshooting: "🔧",
+    [HEAT_GENERATOR_CATEGORY_LABEL]: "🧱",
 };
 const FALLBACK_ICONS = ["📄", "📦", "🔩", "🧩", "🗃️"];
 
@@ -488,7 +494,7 @@ async function refreshNav() {
     ]);
     state.commandCategories = categories;
     state.subcategoriesByCategory = byCategory;
-    state.scenarioCategories = scenarioCategories;
+    state.scenarioCategories = [HEAT_GENERATOR_CATEGORY_LABEL, ...scenarioCategories];
     state.linkCategories = linkCategories;
     renderNavTree();
 }
@@ -496,11 +502,18 @@ async function refreshNav() {
 async function loadAndRender() {
     renderNavTree();
     listEl.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
-    $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" ? "none" : "";
+    const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
+    $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" || isHeatGenerator ? "none" : "";
 
     if (state.tab === "subnet" && !state.favoritesOnly) {
         renderBreadcrumb(null);
         renderSubnetCalculator();
+        return;
+    }
+
+    if (isHeatGenerator && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        renderHeatGenerator();
         return;
     }
 
@@ -549,6 +562,7 @@ async function loadAndRender() {
 function currentLabel() {
     if (state.favoritesOnly) return "Favoritos";
     if (state.tab === "glossary") return "Conceitos";
+    if (state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL) return HEAT_GENERATOR_CATEGORY_LABEL;
     if (state.tab === "scenarios") return "Playbooks";
     if (state.tab === "links") return "Links Úteis";
     if (state.tab === "subnet") return "Calculadora de Subnets";
@@ -606,6 +620,14 @@ $("#paste-use").onclick = () => {
         return;
     }
     const { scenarioId, varName } = pasteTarget;
+    if (scenarioId === HEAT_GEN_PASTE_TARGET) {
+        heatGenState.pasteOptions[varName] = options;
+        heatGenState.values[varName] = options[0];
+        $("#paste-textarea").value = "";
+        $("#paste-dialog").close();
+        renderHeatGenerator();
+        return;
+    }
     scenarioVarOptions[scenarioId] = scenarioVarOptions[scenarioId] || {};
     scenarioVarOptions[scenarioId][varName] = options;
     scenarioVarValues[scenarioId] = scenarioVarValues[scenarioId] || {};
@@ -1284,6 +1306,342 @@ function renderSubnetCalculator() {
         if (e.key === "Enter") run();
     };
     run();
+}
+
+// ---------------------------------------------------------------------
+// Gerador de stack Heat (OpenStack) — rede, sub-rede, router e instancias
+// escolhidas por checkboxes, reaproveitando o mesmo mecanismo de "colar
+// output e criar lista" (📥) usado nas variaveis {{...}} dos playbooks.
+// ---------------------------------------------------------------------
+
+// scenarioId sintetico usado no pasteTarget partilhado, para o distinguir
+// dos playbooks reais guardados na BD.
+const HEAT_GEN_PASTE_TARGET = "__heat__";
+
+const HEAT_VAR_LIST_COMMAND = {
+    rede_existente: "openstack network list",
+    rede_externa: "openstack network list",
+    imagem: "openstack image list",
+    flavor: "openstack flavor list",
+};
+
+const heatGenState = {
+    network: false,
+    subnet: false,
+    router: false,
+    instances: false,
+    values: {
+        nome_rede: "",
+        nome_subnet: "",
+        cidr: "192.168.100.0/24",
+        rede_existente: "",
+        nome_router: "",
+        rede_externa: "",
+        imagem: "",
+        flavor: "",
+        instanceCount: 1,
+        instanceNames: ["servidor-1"],
+        floatingIp: false,
+    },
+    pasteOptions: {},
+};
+
+function heatYamlString(val) {
+    // aspas duplas escapadas: valido tanto em YAML "flow scalar" como para
+    // qualquer caracter especial que o utilizador tenha escrito (espacos, etc.)
+    return JSON.stringify(String(val ?? ""));
+}
+
+function buildHeatTemplate() {
+    const s = heatGenState;
+    const v = s.values;
+    const lines = [];
+    const push = (indent, text) => lines.push("  ".repeat(indent) + text);
+
+    push(0, "heat_template_version: 2021-04-16");
+    push(0, "description: Stack gerado pelo Cábula");
+    push(0, "");
+    push(0, "resources:");
+
+    const hasNetwork = s.network && v.nome_rede.trim();
+    const hasSubnet = s.subnet && v.nome_subnet.trim();
+    const hasRouter = s.router && v.nome_router.trim();
+    const networkRef = hasNetwork ? "{ get_resource: rede }" : heatYamlString(v.rede_existente);
+    let wroteAny = false;
+
+    if (hasNetwork) {
+        push(1, "rede:");
+        push(2, "type: OS::Neutron::Net");
+        push(2, "properties:");
+        push(3, `name: ${heatYamlString(v.nome_rede)}`);
+        push(0, "");
+        wroteAny = true;
+    }
+
+    if (hasSubnet) {
+        push(1, "sub_rede:");
+        push(2, "type: OS::Neutron::Subnet");
+        push(2, "properties:");
+        push(3, `name: ${heatYamlString(v.nome_subnet)}`);
+        push(3, `network: ${networkRef}`);
+        push(3, `cidr: ${heatYamlString(v.cidr)}`);
+        push(0, "");
+        wroteAny = true;
+    }
+
+    if (hasRouter) {
+        push(1, "router:");
+        push(2, "type: OS::Neutron::Router");
+        push(2, "properties:");
+        push(3, `name: ${heatYamlString(v.nome_router)}`);
+        push(3, "external_gateway_info:");
+        push(4, `network: ${heatYamlString(v.rede_externa)}`);
+        push(0, "");
+        wroteAny = true;
+
+        if (hasSubnet) {
+            push(1, "router_interface:");
+            push(2, "type: OS::Neutron::RouterInterface");
+            push(2, "properties:");
+            push(3, "router: { get_resource: router }");
+            push(3, "subnet: { get_resource: sub_rede }");
+            push(0, "");
+        }
+    }
+
+    if (s.instances) {
+        const count = Math.max(1, Math.min(20, Number(v.instanceCount) || 1));
+        for (let idx = 0; idx < count; idx++) {
+            const key = `instancia_${idx + 1}`;
+            const name = (v.instanceNames[idx] || "").trim() || `servidor-${idx + 1}`;
+            push(1, `${key}:`);
+            push(2, "type: OS::Nova::Server");
+            push(2, "properties:");
+            push(3, `name: ${heatYamlString(name)}`);
+            push(3, `image: ${heatYamlString(v.imagem)}`);
+            push(3, `flavor: ${heatYamlString(v.flavor)}`);
+            push(3, "networks:");
+            push(4, `- network: ${networkRef}`);
+            push(0, "");
+            wroteAny = true;
+
+            if (v.floatingIp && hasRouter) {
+                push(1, `ip_flutuante_${idx + 1}:`);
+                push(2, "type: OS::Neutron::FloatingIP");
+                push(2, "properties:");
+                push(3, `floating_network: ${heatYamlString(v.rede_externa)}`);
+                push(0, "");
+
+                push(1, `associar_ip_${idx + 1}:`);
+                push(2, "type: OS::Nova::FloatingIPAssociation");
+                push(2, "properties:");
+                push(3, `floating_ip: { get_resource: ip_flutuante_${idx + 1} }`);
+                push(3, `server_id: { get_resource: ${key} }`);
+                push(0, "");
+            }
+        }
+    }
+
+    if (!wroteAny) push(1, "{}");
+    if (lines[lines.length - 1] === "") lines.pop();
+    return lines.join("\n") + "\n";
+}
+
+// checkboxes de secao (network/subnet/router/instances) ligam a heatGenState
+// diretamente; checkboxes de valor (ex: floatingIp) ligam a heatGenState.values,
+// tal como os outros campos de input/select — por isso tem atributo diferente.
+function heatCheckboxHtml(key, label) {
+    return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.9rem">
+        <input type="checkbox" data-heat-toggle="${key}" ${heatGenState[key] ? "checked" : ""} style="width:16px;height:16px;accent-color:var(--primary)">
+        ${escapeHtml(label)}
+    </label>`;
+}
+
+function heatValueCheckboxHtml(key, label) {
+    return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.9rem">
+        <input type="checkbox" data-heat-value-toggle="${key}" ${heatGenState.values[key] ? "checked" : ""} style="width:16px;height:16px;accent-color:var(--primary)">
+        ${escapeHtml(label)}
+    </label>`;
+}
+
+function heatFieldWrap(label, hint, fieldHtml) {
+    return `<div class="tpl-var-field">
+        <label>${escapeHtml(label)} ${hint ? `<span class="tpl-hint" title="${escapeAttr(hint)}">?</span>` : ""}</label>
+        ${fieldHtml}
+    </div>`;
+}
+
+function heatTextField(key, placeholder) {
+    const value = heatGenState.values[key] || "";
+    return `<div class="tpl-control"><input class="tpl-input" data-heat-input="${key}" placeholder="${escapeAttr(placeholder)}" value="${escapeAttr(value)}"></div>`;
+}
+
+function heatPasteField(key, placeholder) {
+    const options = heatGenState.pasteOptions[key];
+    const value = heatGenState.values[key] || "";
+    if (options) {
+        return `<div class="tpl-control">
+            <select class="tpl-select" data-heat-select="${key}">
+                ${options.map((o) => `<option value="${escapeAttr(o)}" ${value === o ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
+            </select>
+            <button class="tpl-control-btn" data-heat-clear="${key}" title="Voltar a texto livre">✕</button>
+        </div>`;
+    }
+    return `<div class="tpl-control">
+        <input class="tpl-input" data-heat-input="${key}" placeholder="${escapeAttr(placeholder)}" value="${escapeAttr(value)}">
+        <button class="tpl-control-btn" data-heat-paste="${key}" title="Colar output e criar lista">📥</button>
+    </div>`;
+}
+
+function renderHeatGenerator() {
+    const s = heatGenState;
+    const v = s.values;
+
+    let fieldsHtml = "";
+
+    if (s.network) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome da rede", "Nome a dar à rede a criar.", heatTextField("nome_rede", "minha-rede"))}
+        </div>`;
+    }
+
+    if (s.subnet) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome da sub-rede", "Nome a dar à sub-rede.", heatTextField("nome_subnet", "minha-subrede"))}
+            ${heatFieldWrap("CIDR", "Bloco de endereços da sub-rede (ex.: 192.168.100.0/24).", heatTextField("cidr", "192.168.100.0/24"))}
+            ${!s.network ? heatFieldWrap("Rede existente", "Rede onde criar esta sub-rede (já tem de existir).", heatPasteField("rede_existente", "nome da rede")) : ""}
+        </div>`;
+    }
+
+    if (s.router) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome do router", "Nome a dar ao router.", heatTextField("nome_router", "meu-router"))}
+            ${heatFieldWrap("Rede externa", "Rede externa/pública para o gateway do router (ex.: ext-net).", heatPasteField("rede_externa", "ext-net"))}
+        </div>`;
+    }
+
+    if (s.instances) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Imagem", "Imagem do sistema operativo.", heatPasteField("imagem", "ubuntu"))}
+            ${heatFieldWrap("Flavor", "Tamanho da instância (vCPUs/RAM/disco).", heatPasteField("flavor", "m1.small"))}
+            ${!s.network ? heatFieldWrap("Rede existente", "Rede onde ligar as instâncias (já tem de existir).", heatPasteField("rede_existente", "nome da rede")) : ""}
+            ${heatFieldWrap("Nº de instâncias", "Quantas instâncias criar (1–20).", `<div class="tpl-control"><input type="number" min="1" max="20" class="tpl-input" data-heat-count value="${v.instanceCount}"></div>`)}
+        </div>
+        <div class="tpl-vars">
+            ${v.instanceNames
+                .slice(0, v.instanceCount)
+                .map((name, idx) =>
+                    heatFieldWrap(
+                        `Nome da instância ${idx + 1}`,
+                        "",
+                        `<div class="tpl-control"><input class="tpl-input" data-heat-name="${idx}" placeholder="servidor-${idx + 1}" value="${escapeAttr(name)}"></div>`
+                    )
+                )
+                .join("")}
+        </div>`;
+
+        if (s.router) {
+            fieldsHtml += `<div style="margin:10px 0">${heatValueCheckboxHtml("floatingIp", "Ligar instâncias ao router (atribuir IP flutuante pela rede externa)")}</div>`;
+        }
+    }
+
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">Gerar Stack (YAML) — OpenStack Heat</div>
+                <div class="desc">
+                    Marca o que queres criar. O template é gerado em baixo, pronto para
+                    <span class="mono" style="padding:1px 6px">openstack stack create -t ficheiro.yaml nome-da-stack</span>.
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:16px;margin:16px 0">
+                    ${heatCheckboxHtml("network", "Rede (Network)")}
+                    ${heatCheckboxHtml("subnet", "Sub-rede (Subnet)")}
+                    ${heatCheckboxHtml("router", "Router")}
+                    ${heatCheckboxHtml("instances", "Instância(s)")}
+                </div>
+                ${fieldsHtml}
+                <div style="display:flex;gap:8px;margin:16px 0 10px">
+                    <button class="primary" id="heat-copy">Copiar YAML</button>
+                    <button class="ghost" id="heat-download">Descarregar .yaml</button>
+                </div>
+                <pre class="mono" id="heat-output" style="display:block;white-space:pre;overflow-x:auto;padding:14px;font-size:0.8rem;line-height:1.5">${escapeHtml(buildHeatTemplate())}</pre>
+            </div>
+        </div>`;
+
+    const refreshOutput = () => {
+        const pre = $("#heat-output");
+        if (pre) pre.textContent = buildHeatTemplate();
+    };
+
+    listEl.querySelectorAll("[data-heat-toggle]").forEach((el) => {
+        el.onchange = () => {
+            s[el.dataset.heatToggle] = el.checked;
+            renderHeatGenerator();
+        };
+    });
+    listEl.querySelectorAll("[data-heat-value-toggle]").forEach((el) => {
+        el.onchange = () => {
+            v[el.dataset.heatValueToggle] = el.checked;
+            refreshOutput();
+        };
+    });
+    listEl.querySelectorAll("[data-heat-input]").forEach((el) => {
+        el.oninput = () => {
+            v[el.dataset.heatInput] = el.value;
+            refreshOutput();
+        };
+    });
+    listEl.querySelectorAll("[data-heat-select]").forEach((el) => {
+        el.onchange = () => {
+            v[el.dataset.heatSelect] = el.value;
+            refreshOutput();
+        };
+    });
+    listEl.querySelectorAll("[data-heat-name]").forEach((el) => {
+        el.oninput = () => {
+            v.instanceNames[Number(el.dataset.heatName)] = el.value;
+            refreshOutput();
+        };
+    });
+    const countInput = listEl.querySelector("[data-heat-count]");
+    if (countInput) {
+        countInput.onchange = () => {
+            const n = Math.max(1, Math.min(20, Number(countInput.value) || 1));
+            v.instanceCount = n;
+            while (v.instanceNames.length < n) v.instanceNames.push(`servidor-${v.instanceNames.length + 1}`);
+            renderHeatGenerator();
+        };
+    }
+    listEl.querySelectorAll("[data-heat-paste]").forEach((btn) => {
+        btn.onclick = () => {
+            pasteTarget = { scenarioId: HEAT_GEN_PASTE_TARGET, varName: btn.dataset.heatPaste };
+            const suggestion = HEAT_VAR_LIST_COMMAND[pasteTarget.varName];
+            $("#paste-suggestion").innerHTML = suggestion
+                ? `Corre <span class="mono" style="font-size:0.8rem">${escapeHtml(suggestion)}</span> e cola o resultado abaixo.`
+                : "";
+            $("#paste-dialog").showModal();
+        };
+    });
+    listEl.querySelectorAll("[data-heat-clear]").forEach((btn) => {
+        btn.onclick = () => {
+            delete s.pasteOptions[btn.dataset.heatClear];
+            renderHeatGenerator();
+        };
+    });
+
+    $("#heat-copy").onclick = () => {
+        navigator.clipboard.writeText(buildHeatTemplate());
+        toast("YAML copiado");
+    };
+    $("#heat-download").onclick = () => {
+        const blob = new Blob([buildHeatTemplate()], { type: "text/yaml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "stack.yaml";
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 }
 
 (async () => {
