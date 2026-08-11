@@ -1331,6 +1331,7 @@ const heatGenState = {
     router: false,
     instances: false,
     values: {
+        descricao: "Stack gerado pelo Cábula",
         nome_rede: "",
         nome_subnet: "",
         cidr: "192.168.100.0/24",
@@ -1359,7 +1360,7 @@ function buildHeatTemplate() {
     const push = (indent, text) => lines.push("  ".repeat(indent) + text);
 
     push(0, "heat_template_version: 2021-04-16");
-    push(0, "description: Stack gerado pelo Cábula");
+    push(0, `description: ${heatYamlString(v.descricao || "Stack gerado pelo Cábula")}`);
     push(0, "");
     push(0, "resources:");
 
@@ -1497,7 +1498,9 @@ function renderHeatGenerator() {
     const s = heatGenState;
     const v = s.values;
 
-    let fieldsHtml = "";
+    let fieldsHtml = `<div class="tpl-vars">
+        ${heatFieldWrap("Descrição do stack", "Fica na linha 'description' do template.", heatTextField("descricao", "Stack gerado pelo Cábula"))}
+    </div>`;
 
     if (s.network) {
         fieldsHtml += `<div class="tpl-vars">
