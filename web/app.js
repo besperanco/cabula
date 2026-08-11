@@ -1569,6 +1569,13 @@ function renderHeatGenerator() {
                     <button class="ghost" id="heat-download">Descarregar .yaml</button>
                 </div>
                 <pre class="mono" id="heat-output" style="display:block;white-space:pre;overflow-x:auto;padding:14px;font-size:0.8rem;line-height:1.5">${escapeHtml(buildHeatTemplate())}</pre>
+                <div class="desc" style="margin-top:14px">
+                    Antes de criar a stack a sério, valida o template (não cria nada, só verifica):
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                    <span class="mono" id="heat-dryrun-cmd" style="flex:1">openstack stack create --dry-run --template stack.yaml teste</span>
+                    <button class="tpl-control-btn" id="heat-copy-dryrun" title="Copiar comando" style="border:1px solid var(--border);border-radius:7px">${COPY_ICON_SVG}</button>
+                </div>
             </div>
         </div>`;
 
@@ -1648,6 +1655,10 @@ function renderHeatGenerator() {
         a.download = "stack.yaml";
         a.click();
         URL.revokeObjectURL(url);
+    };
+    $("#heat-copy-dryrun").onclick = () => {
+        navigator.clipboard.writeText($("#heat-dryrun-cmd").textContent);
+        toast("Comando copiado");
     };
 }
 
