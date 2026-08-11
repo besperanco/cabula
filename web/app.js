@@ -1320,6 +1320,7 @@ const HEAT_GEN_PASTE_TARGET = "__heat__";
 
 const HEAT_VAR_LIST_COMMAND = {
     rede_existente: "openstack network list",
+    subnet_existente: "openstack subnet list",
     rede_externa: "openstack network list --external",
     imagem: "openstack image list",
     flavor: "openstack flavor list",
@@ -1338,6 +1339,7 @@ const heatGenState = {
         nome_subnet: "",
         cidr: "192.168.100.0/24",
         rede_existente: "",
+        subnet_existente: "",
         nome_router: "",
         rede_externa: "",
         imagem: "",
@@ -1387,6 +1389,13 @@ function buildHeatTemplate() {
     const hasSubnet = s.subnet && v.nome_subnet.trim();
     const hasRouter = s.router && v.nome_router.trim();
     const networkRef = hasNetwork ? "{ get_resource: rede }" : heatYamlString(v.rede_existente);
+    // sub-rede existente (para ligar ao router sem a criar de novo): so conta
+    // se o utilizador desmarcou "Sub-rede (Subnet)" e escreveu um nome.
+    const subnetRef = hasSubnet
+        ? "{ get_resource: sub_rede }"
+        : !s.subnet && v.subnet_existente.trim()
+          ? heatYamlString(v.subnet_existente)
+          : null;
     let wroteAny = false;
 
     if (hasNetwork) {
@@ -1427,14 +1436,14 @@ function buildHeatTemplate() {
         push(0, "");
         wroteAny = true;
 
-        if (hasSubnet) {
-            push(1, "# Liga o router a sub-rede criada acima — sem isto o router existe mas");
-            push(1, "# nao encaminha trafego de/para essa sub-rede.");
+        if (subnetRef) {
+            push(1, "# Liga o router a sub-rede (criada acima ou ja existente) — sem isto o");
+            push(1, "# router existe mas nao encaminha trafego de/para essa sub-rede.");
             push(1, "router_interface:");
             push(2, "type: OS::Neutron::RouterInterface");
             push(2, "properties:");
             push(3, "router_id: { get_resource: router }");
-            push(3, "subnet: { get_resource: sub_rede }");
+            push(3, `subnet: ${subnetRef}`);
             push(0, "");
         }
     }
@@ -1559,6 +1568,7 @@ function renderHeatGenerator() {
         fieldsHtml += `<div class="tpl-vars">
             ${heatFieldWrap("Nome do router", "Nome a dar ao router.", heatTextField("nome_router", "meu-router"))}
             ${heatFieldWrap("Rede externa", "Rede externa/pública para o gateway do router. Confirma que existe mesmo com 'openstack network list --external' antes de correr a stack.", heatPasteField("rede_externa", "ext-net"))}
+            ${!s.subnet ? heatFieldWrap("Sub-rede existente", "Opcional: liga o router a uma sub-rede já existente (em vez de criar uma nova). Deixa em branco para não ligar a nenhuma.", heatPasteField("subnet_existente", "nome da sub-rede")) : ""}
         </div>`;
     }
 
