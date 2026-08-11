@@ -1327,6 +1327,7 @@ const HEAT_VAR_LIST_COMMAND = {
 };
 
 const heatGenState = {
+    educational: true,
     network: false,
     subnet: false,
     router: false,
@@ -1375,14 +1376,22 @@ function buildHeatTemplate() {
     const v = s.values;
     const lines = [];
     const push = (indent, text) => lines.push("  ".repeat(indent) + text);
+    // so escreve comentarios "#" quando o modo educativo esta ligado — o
+    // toggle deixa o YAML "limpo" para quem so quer o ficheiro pronto a usar.
+    const comment = (indent, ...linesOfText) => {
+        if (s.educational) linesOfText.forEach((t) => push(indent, `# ${t}`));
+    };
 
-    push(0, "# Versao da linguagem HOT (Heat Orchestration Template) usada neste ficheiro.");
+    comment(0, "Versao da linguagem HOT (Heat Orchestration Template) usada neste ficheiro.");
     push(0, "heat_template_version: 2015-10-15");
-    push(0, "# Descricao livre da stack — aparece no Horizon e no 'openstack stack show'.");
+    comment(0, "Descricao livre da stack — aparece no Horizon e no 'openstack stack show'.");
     push(0, `description: ${heatYamlString(v.descricao || "Stack gerado pelo Cábula")}`);
     push(0, "");
-    push(0, "# Cada bloco abaixo e um recurso da OpenStack a criar. 'get_resource: X' referencia");
-    push(0, "# outro recurso deste ficheiro pelo seu nome — assim o Heat sabe a ordem de criacao.");
+    comment(
+        0,
+        "Cada bloco abaixo e um recurso da OpenStack a criar. 'get_resource: X' referencia",
+        "outro recurso deste ficheiro pelo seu nome — assim o Heat sabe a ordem de criacao."
+    );
     push(0, "resources:");
 
     const hasNetwork = s.network && v.nome_rede.trim();
@@ -1399,8 +1408,7 @@ function buildHeatTemplate() {
     let wroteAny = false;
 
     if (hasNetwork) {
-        push(1, "# Rede virtual isolada (equivalente logico a uma VLAN) onde vao viver as");
-        push(1, "# sub-redes e instancias abaixo.");
+        comment(1, "Rede virtual isolada (equivalente logico a uma VLAN) onde vao viver as", "sub-redes e instancias abaixo.");
         push(1, "rede:");
         push(2, "type: OS::Neutron::Net");
         push(2, "properties:");
@@ -1410,8 +1418,7 @@ function buildHeatTemplate() {
     }
 
     if (hasSubnet) {
-        push(1, "# Sub-rede dentro da rede acima: define o bloco de enderecos IP (CIDR) que");
-        push(1, "# vai ser atribuido as instancias ligadas a esta rede.");
+        comment(1, "Sub-rede dentro da rede acima: define o bloco de enderecos IP (CIDR) que", "vai ser atribuido as instancias ligadas a esta rede.");
         push(1, "sub_rede:");
         push(2, "type: OS::Neutron::Subnet");
         push(2, "properties:");
@@ -1424,9 +1431,12 @@ function buildHeatTemplate() {
     }
 
     if (hasRouter) {
-        push(1, "# Router: liga a rede interna a rede externa indicada em");
-        push(1, "# 'external_gateway_info', permitindo saida para fora (e, mais abaixo,");
-        push(1, "# a associacao de IPs flutuantes).");
+        comment(
+            1,
+            "Router: liga a rede interna a rede externa indicada em",
+            "'external_gateway_info', permitindo saida para fora (e, mais abaixo,",
+            "a associacao de IPs flutuantes)."
+        );
         push(1, "router:");
         push(2, "type: OS::Neutron::Router");
         push(2, "properties:");
@@ -1437,8 +1447,7 @@ function buildHeatTemplate() {
         wroteAny = true;
 
         if (subnetRef) {
-            push(1, "# Liga o router a sub-rede (criada acima ou ja existente) — sem isto o");
-            push(1, "# router existe mas nao encaminha trafego de/para essa sub-rede.");
+            comment(1, "Liga o router a sub-rede (criada acima ou ja existente) — sem isto o", "router existe mas nao encaminha trafego de/para essa sub-rede.");
             push(1, "router_interface:");
             push(2, "type: OS::Neutron::RouterInterface");
             push(2, "properties:");
@@ -1453,8 +1462,7 @@ function buildHeatTemplate() {
         for (let idx = 0; idx < count; idx++) {
             const key = `server${idx + 1}`;
             const name = (v.instanceNames[idx] || "").trim() || `servidor-${idx + 1}`;
-            push(1, `# Instancia (VM) ${idx + 1}: criada a partir da imagem e do flavor`);
-            push(1, "# escolhidos, ligada a rede definida acima.");
+            comment(1, `Instancia (VM) ${idx + 1}: criada a partir da imagem e do flavor`, "escolhidos, ligada a rede definida acima.");
             push(1, `${key}:`);
             push(2, "type: OS::Nova::Server");
             push(2, "properties:");
@@ -1467,15 +1475,14 @@ function buildHeatTemplate() {
             wroteAny = true;
 
             if (v.floatingIp && hasRouter) {
-                push(1, "# IP publico (flutuante) reservado na rede externa do router, para dar");
-                push(1, "# acesso a esta instancia a partir de fora.");
+                comment(1, "IP publico (flutuante) reservado na rede externa do router, para dar", "acesso a esta instancia a partir de fora.");
                 push(1, `ip_flutuante_${idx + 1}:`);
                 push(2, "type: OS::Neutron::FloatingIP");
                 push(2, "properties:");
                 push(3, `floating_network: ${heatYamlString(v.rede_externa)}`);
                 push(0, "");
 
-                push(1, "# Associa o IP flutuante acima a esta instancia especifica.");
+                comment(1, "Associa o IP flutuante acima a esta instancia especifica.");
                 push(1, `associar_ip_${idx + 1}:`);
                 push(2, "type: OS::Nova::FloatingIPAssociation");
                 push(2, "properties:");
@@ -1604,6 +1611,9 @@ function renderHeatGenerator() {
                 <div class="desc">
                     Marca o que queres criar. O template é gerado em baixo, pronto para
                     <span class="mono" id="heat-create-cmd" style="padding:1px 6px">${escapeHtml(heatCreateCmd())}</span>.
+                </div>
+                <div style="margin-top:10px">
+                    ${heatCheckboxHtml("educational", "Modo educativo (comentários # a explicar cada bloco do YAML)")}
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:16px;margin:16px 0">
                     ${heatCheckboxHtml("network", "Rede (Network)")}
