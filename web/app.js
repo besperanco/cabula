@@ -1359,7 +1359,7 @@ function buildHeatTemplate() {
     const lines = [];
     const push = (indent, text) => lines.push("  ".repeat(indent) + text);
 
-    push(0, "heat_template_version: 2021-04-16");
+    push(0, "heat_template_version: 2015-10-15");
     push(0, `description: ${heatYamlString(v.descricao || "Stack gerado pelo Cábula")}`);
     push(0, "");
     push(0, "resources:");
