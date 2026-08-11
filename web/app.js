@@ -291,10 +291,37 @@ $("#add-btn").onclick = () => {
 let paletteCommands = null; // cache da 1ª abertura; refeito a cada load da pagina
 let paletteResults = [];
 let paletteActiveIndex = 0;
+let paletteCategoryFilter = null; // null = todas as categorias
+
+function paletteCategories() {
+    return [...new Set((paletteCommands || []).map((c) => c.category).filter(Boolean))].sort();
+}
+
+// Tab avanca para a categoria seguinte (por ordem alfabetica), Shift+Tab
+// recua; passar do ultimo/primeiro volta a "todas as categorias" (null).
+function cyclePaletteCategory(direction) {
+    const cats = paletteCategories();
+    if (!cats.length) return;
+    if (paletteCategoryFilter === null) {
+        paletteCategoryFilter = direction > 0 ? cats[0] : cats[cats.length - 1];
+    } else {
+        const nextIdx = cats.indexOf(paletteCategoryFilter) + direction;
+        paletteCategoryFilter = nextIdx < 0 || nextIdx >= cats.length ? null : cats[nextIdx];
+    }
+    renderPaletteResults($("#palette-input").value);
+}
+
+function updatePaletteFilterLabel() {
+    const el = $("#palette-filter");
+    el.innerHTML = paletteCategoryFilter
+        ? `Categoria: <b>${escapeHtml(paletteCategoryFilter)}</b> · <span class="kbd-chip">Tab</span> seguinte · <span class="kbd-chip">Shift Tab</span> anterior`
+        : `Todas as categorias · <span class="kbd-chip">Tab</span> para filtrar`;
+}
 
 async function openPalette() {
     const input = $("#palette-input");
     input.value = "";
+    paletteCategoryFilter = null;
     if (!paletteCommands) {
         const { data } = await supabase.from("commands").select("id, command, description, category, subcategory, tags");
         paletteCommands = data || [];
@@ -307,12 +334,14 @@ async function openPalette() {
 function renderPaletteResults(q) {
     q = q.toLowerCase().trim();
     const byRelevance = (a, b) => (b.usage_count || 0) - (a.usage_count || 0);
+    const pool = paletteCategoryFilter ? paletteCommands.filter((c) => c.category === paletteCategoryFilter) : paletteCommands;
     paletteResults = (
         !q
-            ? [...paletteCommands].sort(byRelevance)
-            : paletteCommands.filter((c) => [c.command, c.description, c.tags].some((f) => (f || "").toLowerCase().includes(q))).sort(byRelevance)
+            ? [...pool].sort(byRelevance)
+            : pool.filter((c) => [c.command, c.description, c.tags].some((f) => (f || "").toLowerCase().includes(q))).sort(byRelevance)
     ).slice(0, 30);
     paletteActiveIndex = 0;
+    updatePaletteFilterLabel();
     const el = $("#palette-results");
     if (!paletteResults.length) {
         el.innerHTML = '<div class="palette-empty">// nada encontrado</div>';
@@ -367,8 +396,29 @@ $("#palette-input").onkeydown = (e) => {
     } else if (e.key === "Enter") {
         e.preventDefault();
         selectPaletteItem(paletteActiveIndex);
+    } else if (e.key === "Tab") {
+        e.preventDefault();
+        cyclePaletteCategory(e.shiftKey ? -1 : 1);
     }
 };
+
+// ---------------------------------------------------------------------
+// Dialogo de atalhos de teclado ("?")
+// ---------------------------------------------------------------------
+
+function isTypingTarget(el) {
+    const tag = (el.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+}
+
+$("#shortcuts-btn").onclick = () => $("#shortcuts-dialog").showModal();
+$("#shortcuts-close").onclick = () => $("#shortcuts-dialog").close();
+document.addEventListener("keydown", (e) => {
+    if (e.key === "?" && !isTypingTarget(document.activeElement)) {
+        e.preventDefault();
+        $("#shortcuts-dialog").showModal();
+    }
+});
 
 $("#menu-toggle").onclick = () => {
     $("#sidebar").classList.add("open");
