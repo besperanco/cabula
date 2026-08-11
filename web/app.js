@@ -668,6 +668,9 @@ const VAR_HINTS = {
     dominio: "Domínio a testar (ex.: exemplo.com).",
     porta: "Número da porta de rede a verificar (ex.: 443, 22, 8080).",
     servico: "Nome do serviço systemd (ex.: nginx, docker). Consulta com 'systemctl list-units --type=service'.",
+    id_porta: "ID da porta de rede (Neutron) ligada à instância. Consulta com 'openstack port list --server <nome-da-instância>'.",
+    subrede: "Sub-rede a verificar. Consulta com 'openstack subnet list'.",
+    router: "Router a verificar. Consulta com 'openstack router list'.",
 };
 function varHint(name) {
     return VAR_HINTS[name] || `Substitui pelo valor real de "${prettifyVar(name).toLowerCase()}" antes de copiar o comando.`;
@@ -686,6 +689,9 @@ const VAR_LIST_COMMAND = {
     namespace: "kubectl get namespaces",
     nome_pod: "kubectl get pods",
     nome_no: "kubectl get nodes",
+    id_porta: "openstack port list",
+    subrede: "openstack subnet list",
+    router: "openstack router list",
 };
 function renderTemplate(text, values) {
     return escapeHtml(text).replace(/\{\{(\w+)\}\}/g, (match, name) => {
