@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as yamlLib from "https://esm.sh/js-yaml@4";
 
 // A chave "anon" é pública por desenho (vai sempre para código client-side);
 // quem escreve precisa do PIN, verificado do lado do Postgres nas funções RPC.
@@ -13,12 +14,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // template Heat com um manifesto Kubernetes so pelo nome na lista.
 const HEAT_GENERATOR_CATEGORY_LABEL = "Gerar Stack (YAML)";
 const K8S_GENERATOR_CATEGORY_LABEL = "Gerar Manifesto (K8s)";
+const YAML_CHECKER_CATEGORY_LABEL = "Verificar YAML";
 
 const CATEGORY_ICON = {
     Linux: "🐧", Kubernetes: "☸️", OpenStack: "☁️", Geral: "🧭",
     Docker: "🐳", Redes: "🌐", Bash: "💻", Python: "🐍", Troubleshooting: "🔧",
     [HEAT_GENERATOR_CATEGORY_LABEL]: "🧱",
     [K8S_GENERATOR_CATEGORY_LABEL]: "☸️",
+    [YAML_CHECKER_CATEGORY_LABEL]: "🩺",
 };
 const FALLBACK_ICONS = ["📄", "📦", "🔩", "🧩", "🗃️"];
 
@@ -547,7 +550,7 @@ async function refreshNav() {
     ]);
     state.commandCategories = categories;
     state.subcategoriesByCategory = byCategory;
-    state.scenarioCategories = [HEAT_GENERATOR_CATEGORY_LABEL, K8S_GENERATOR_CATEGORY_LABEL, ...scenarioCategories];
+    state.scenarioCategories = [HEAT_GENERATOR_CATEGORY_LABEL, K8S_GENERATOR_CATEGORY_LABEL, YAML_CHECKER_CATEGORY_LABEL, ...scenarioCategories];
     state.linkCategories = linkCategories;
     renderNavTree();
 }
@@ -557,7 +560,9 @@ async function loadAndRender() {
     listEl.innerHTML = '<div class="empty"><div class="term-loading">❯ <span class="cursor-blink">_</span></div></div>';
     const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
     const isK8sGenerator = state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL;
-    $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" || isHeatGenerator || isK8sGenerator ? "none" : "";
+    const isYamlChecker = state.tab === "scenarios" && state.category === YAML_CHECKER_CATEGORY_LABEL;
+    $("#add-btn").style.display =
+        state.favoritesOnly || state.tab === "subnet" || isHeatGenerator || isK8sGenerator || isYamlChecker ? "none" : "";
 
     if (state.tab === "subnet" && !state.favoritesOnly) {
         renderBreadcrumb(null);
@@ -574,6 +579,12 @@ async function loadAndRender() {
     if (isK8sGenerator && !state.favoritesOnly) {
         renderBreadcrumb(null);
         renderK8sGenerator();
+        return;
+    }
+
+    if (isYamlChecker && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        renderYamlChecker();
         return;
     }
 
@@ -624,6 +635,7 @@ function currentLabel() {
     if (state.tab === "glossary") return "Conceitos";
     if (state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL) return HEAT_GENERATOR_CATEGORY_LABEL;
     if (state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL) return K8S_GENERATOR_CATEGORY_LABEL;
+    if (state.tab === "scenarios" && state.category === YAML_CHECKER_CATEGORY_LABEL) return YAML_CHECKER_CATEGORY_LABEL;
     if (state.tab === "scenarios") return "Playbooks";
     if (state.tab === "links") return "Links Úteis";
     if (state.tab === "subnet") return "Calculadora de Subnets";
@@ -2395,6 +2407,199 @@ function renderK8sGenerator() {
     $("#k8s-copy-dryrun").onclick = () => {
         navigator.clipboard.writeText($("#k8s-dryrun-cmd").textContent);
         toast("Comando copiado");
+    };
+}
+
+// ---------------------------------------------------------------------
+// Verificar YAML: cola um template Heat ou manifesto Kubernetes qualquer
+// (nao tem de ter sido feito pelos geradores acima) e diz o que esta
+// errado. Usa o js-yaml (parser real, nao feito a mao) para ler o YAML e
+// depois aplica os mesmos tipos de verificacao estrutural dos corretores
+// dos geradores, mas sobre o documento tal como foi colado.
+// ---------------------------------------------------------------------
+
+const KNOWN_HEAT_RESOURCE_CHECKS = {
+    "OS::Neutron::Net": (props, err, warn) => {
+        if (!props?.name) warn('Falta "name" nas properties.');
+    },
+    "OS::Neutron::Subnet": (props, err, warn) => {
+        if (!props?.cidr) err('Falta "cidr" nas properties.');
+        if (!props?.network_id && !props?.network) err('Falta "network_id" (ou "network") nas properties.');
+    },
+    "OS::Neutron::Router": (props, err, warn) => {
+        if (!props?.external_gateway_info) warn('Sem "external_gateway_info" — o router fica sem gateway externo.');
+    },
+    "OS::Neutron::RouterInterface": (props, err, warn) => {
+        if (!props?.router_id && !props?.router) err('Falta "router_id" (ou "router") nas properties.');
+        if (!props?.subnet && !props?.subnet_id) err('Falta "subnet" (ou "subnet_id") nas properties.');
+    },
+    "OS::Nova::Server": (props, err, warn) => {
+        if (!props?.image) err('Falta "image" nas properties.');
+        if (!props?.flavor) err('Falta "flavor" nas properties.');
+    },
+    "OS::Neutron::FloatingIP": (props, err, warn) => {
+        if (!props?.floating_network && !props?.floating_network_id) err('Falta "floating_network" (ou "floating_network_id") nas properties.');
+    },
+};
+
+// procura recursivamente todos os "{ get_resource: X }" dentro de um valor
+// ja interpretado pelo js-yaml (objetos/arrays JS, nao texto).
+function collectGetResourceRefs(value, refs = []) {
+    if (value && typeof value === "object") {
+        if (!Array.isArray(value) && typeof value.get_resource === "string") refs.push(value.get_resource);
+        for (const v of Object.values(value)) collectGetResourceRefs(v, refs);
+    }
+    return refs;
+}
+
+function validateHeatDoc(doc) {
+    const issues = [];
+    const err = (message) => issues.push({ level: "error", message });
+    const warn = (message) => issues.push({ level: "warning", message });
+
+    if (!doc.heat_template_version) err('Falta "heat_template_version" no topo do ficheiro.');
+
+    const resources = doc.resources;
+    if (!resources || typeof resources !== "object" || Array.isArray(resources) || !Object.keys(resources).length) {
+        err('Falta a secção "resources" (ou está vazia).');
+        return issues;
+    }
+
+    for (const [key, res] of Object.entries(resources)) {
+        if (!res || typeof res !== "object") {
+            err(`Recurso "${key}" está vazio ou mal formado.`);
+            continue;
+        }
+        if (!res.type) {
+            err(`Recurso "${key}" sem "type".`);
+            continue;
+        }
+        if (!String(res.type).startsWith("OS::")) {
+            warn(`Recurso "${key}" tem type "${res.type}", que não parece um tipo OpenStack válido (o esperado é começar por "OS::").`);
+        }
+        const check = KNOWN_HEAT_RESOURCE_CHECKS[res.type];
+        if (check) check(res.properties, (m) => err(`Recurso "${key}" (${res.type}): ${m}`), (m) => warn(`Recurso "${key}" (${res.type}): ${m}`));
+    }
+
+    const refs = collectGetResourceRefs(resources);
+    [...new Set(refs)].filter((r) => !(r in resources)).forEach((r) => err(`"get_resource: ${r}" aponta para um recurso que não existe no ficheiro.`));
+
+    return issues;
+}
+
+function validateK8sDoc(doc, index, total) {
+    const issues = [];
+    const label = doc?.kind ? `${doc.kind}${total > 1 ? ` (documento ${index + 1})` : ""}` : `Documento ${index + 1}`;
+    const err = (message) => issues.push({ level: "error", message: `${label}: ${message}` });
+    const warn = (message) => issues.push({ level: "warning", message: `${label}: ${message}` });
+
+    if (!doc || typeof doc !== "object") {
+        err("documento vazio ou mal formado.");
+        return issues;
+    }
+    if (!doc.apiVersion) err('falta "apiVersion".');
+    if (!doc.kind) err('falta "kind".');
+    if (!doc.metadata?.name) err('falta "metadata.name".');
+    else {
+        const issue = k8sNameIssue(doc.metadata.name);
+        if (issue) err(`"metadata.name" inválido: ${issue}.`);
+    }
+
+    if (doc.kind === "Deployment") {
+        const containers = doc.spec?.template?.spec?.containers;
+        if (!doc.spec?.selector?.matchLabels) err('falta "spec.selector.matchLabels".');
+        if (!containers || !containers.length) err('falta "spec.template.spec.containers" (ou está vazio).');
+        else containers.forEach((c, i) => { if (!c.image) err(`container #${i + 1} sem "image".`); });
+        const selectorLabels = doc.spec?.selector?.matchLabels;
+        const templateLabels = doc.spec?.template?.metadata?.labels;
+        if (selectorLabels && templateLabels) {
+            const mismatch = Object.entries(selectorLabels).some(([k, v]) => templateLabels[k] !== v);
+            if (mismatch) err('"spec.selector.matchLabels" não corresponde a "spec.template.metadata.labels" — o Deployment não vai gerir os próprios pods.');
+        }
+        if (!(Number(doc.spec?.replicas) >= 1)) warn('"spec.replicas" em falta ou inválido — o Kubernetes assume 1 por defeito.');
+    }
+
+    if (doc.kind === "Service") {
+        if (!doc.spec?.selector) warn('sem "spec.selector" — só faz sentido se for propositadamente um Service sem selector (ex.: ligado a um Endpoints manual).');
+        if (!doc.spec?.ports?.length) err('falta "spec.ports" (ou está vazio).');
+    }
+
+    return issues;
+}
+
+function checkYamlContent(text) {
+    if (!text.trim()) return { empty: true };
+    let docs;
+    try {
+        docs = yamlLib.loadAll(text).filter((d) => d != null);
+    } catch (e) {
+        const where = e?.mark ? ` (linha ${e.mark.line + 1}, coluna ${e.mark.column + 1})` : "";
+        return { syntaxError: `YAML inválido${where}: ${e.reason || e.message}` };
+    }
+    if (!docs.length) return { empty: true };
+
+    const isHeat = docs.length === 1 && docs[0] && typeof docs[0] === "object" && "heat_template_version" in docs[0];
+    const isK8s = docs.every((d) => d && typeof d === "object" && d.apiVersion && d.kind);
+
+    if (isHeat) return { kind: "heat", docCount: 1, issues: validateHeatDoc(docs[0]) };
+    if (isK8s) return { kind: "k8s", docCount: docs.length, issues: docs.flatMap((d, i) => validateK8sDoc(d, i, docs.length)) };
+    return {
+        kind: "unknown",
+        docCount: docs.length,
+        issues: [{ level: "warning", message: "Sintaxe YAML válida, mas isto não parece um template Heat nem um manifesto Kubernetes — só a sintaxe foi verificada." }],
+    };
+}
+
+function renderYamlChecker() {
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">Verificar YAML — Heat ou Kubernetes</div>
+                <div class="desc">
+                    Cola aqui um YAML — template Heat ou manifesto Kubernetes, feito ou não pelos
+                    geradores acima — e diz-te o que está errado. Não precisa de cloud/cluster ligados.
+                </div>
+                <textarea id="yaml-checker-input" rows="16" placeholder="Cola o YAML aqui..."
+                    style="width:100%;margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:0.82rem;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--code-bg);color:var(--text)"></textarea>
+                <div style="display:flex;gap:8px;margin:10px 0">
+                    <button class="primary" id="yaml-checker-run">Verificar</button>
+                    <button class="ghost" id="yaml-checker-clear">Limpar</button>
+                </div>
+                <div id="yaml-checker-result"></div>
+            </div>
+        </div>`;
+
+    const input = $("#yaml-checker-input");
+    const resultEl = $("#yaml-checker-result");
+
+    const KIND_LABEL = { heat: "Template Heat (OpenStack)", k8s: "Manifesto Kubernetes", unknown: "Tipo não reconhecido" };
+
+    const run = () => {
+        const result = checkYamlContent(input.value);
+        if (result.empty) {
+            resultEl.innerHTML = "";
+            return;
+        }
+        if (result.syntaxError) {
+            resultEl.innerHTML = `<div class="validation-panel"><div class="validation-item error"><span>❌</span><span>${escapeHtml(result.syntaxError)}</span></div></div>`;
+            return;
+        }
+        const header = `<div class="desc" style="margin:14px 0 4px">
+            Detetado: <b>${escapeHtml(KIND_LABEL[result.kind] || "?")}</b>${result.docCount > 1 ? ` · ${result.docCount} documentos` : ""}
+        </div>`;
+        resultEl.innerHTML = header + renderValidationPanel(result.issues);
+    };
+
+    let debounceTimer = null;
+    input.oninput = () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(run, 400);
+    };
+    $("#yaml-checker-run").onclick = run;
+    $("#yaml-checker-clear").onclick = () => {
+        input.value = "";
+        resultEl.innerHTML = "";
+        input.focus();
     };
 }
 
