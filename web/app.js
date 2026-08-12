@@ -7,15 +7,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Categoria "falsa" dentro de Playbooks: nao vem da BD, e um gerador de
-// template Heat da OpenStack (rede/sub-rede/router/instancias) tratado a
-// parte, tal como a Calculadora de Subnets e a sua propria tab sintetica.
+// Categorias "falsas" dentro de Playbooks: nao vem da BD, sao geradores de
+// YAML tratados a parte, tal como a Calculadora de Subnets e a sua propria
+// tab sintetica. Icones diferentes (🧱 vs ☸️) para nao confundir um
+// template Heat com um manifesto Kubernetes so pelo nome na lista.
 const HEAT_GENERATOR_CATEGORY_LABEL = "Gerar Stack (YAML)";
+const K8S_GENERATOR_CATEGORY_LABEL = "Gerar Manifesto (K8s)";
 
 const CATEGORY_ICON = {
     Linux: "🐧", Kubernetes: "☸️", OpenStack: "☁️", Geral: "🧭",
     Docker: "🐳", Redes: "🌐", Bash: "💻", Python: "🐍", Troubleshooting: "🔧",
     [HEAT_GENERATOR_CATEGORY_LABEL]: "🧱",
+    [K8S_GENERATOR_CATEGORY_LABEL]: "☸️",
 };
 const FALLBACK_ICONS = ["📄", "📦", "🔩", "🧩", "🗃️"];
 
@@ -544,7 +547,7 @@ async function refreshNav() {
     ]);
     state.commandCategories = categories;
     state.subcategoriesByCategory = byCategory;
-    state.scenarioCategories = [HEAT_GENERATOR_CATEGORY_LABEL, ...scenarioCategories];
+    state.scenarioCategories = [HEAT_GENERATOR_CATEGORY_LABEL, K8S_GENERATOR_CATEGORY_LABEL, ...scenarioCategories];
     state.linkCategories = linkCategories;
     renderNavTree();
 }
@@ -553,7 +556,8 @@ async function loadAndRender() {
     renderNavTree();
     listEl.innerHTML = '<div class="empty"><div class="term-loading">❯ <span class="cursor-blink">_</span></div></div>';
     const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
-    $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" || isHeatGenerator ? "none" : "";
+    const isK8sGenerator = state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL;
+    $("#add-btn").style.display = state.favoritesOnly || state.tab === "subnet" || isHeatGenerator || isK8sGenerator ? "none" : "";
 
     if (state.tab === "subnet" && !state.favoritesOnly) {
         renderBreadcrumb(null);
@@ -564,6 +568,12 @@ async function loadAndRender() {
     if (isHeatGenerator && !state.favoritesOnly) {
         renderBreadcrumb(null);
         renderHeatGenerator();
+        return;
+    }
+
+    if (isK8sGenerator && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        renderK8sGenerator();
         return;
     }
 
@@ -613,6 +623,7 @@ function currentLabel() {
     if (state.favoritesOnly) return "Favoritos";
     if (state.tab === "glossary") return "Conceitos";
     if (state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL) return HEAT_GENERATOR_CATEGORY_LABEL;
+    if (state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL) return K8S_GENERATOR_CATEGORY_LABEL;
     if (state.tab === "scenarios") return "Playbooks";
     if (state.tab === "links") return "Links Úteis";
     if (state.tab === "subnet") return "Calculadora de Subnets";
@@ -709,6 +720,14 @@ $("#paste-use").onclick = () => {
         $("#paste-textarea").value = "";
         $("#paste-dialog").close();
         renderHeatGenerator();
+        return;
+    }
+    if (scenarioId === K8S_GEN_PASTE_TARGET) {
+        k8sGenState.pasteOptions[varName] = options;
+        k8sGenState.values[varName] = options[0];
+        $("#paste-textarea").value = "";
+        $("#paste-dialog").close();
+        renderK8sGenerator();
         return;
     }
     scenarioVarOptions[scenarioId] = scenarioVarOptions[scenarioId] || {};
@@ -1120,7 +1139,10 @@ function renderCard(item) {
 }
 
 function escapeHtml(s) {
-    return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    // String(s ?? "") em vez de (s || "") — aceita numeros/outros tipos sem
+    // rebentar (ex: valores numericos por defeito em campos do gerador K8s),
+    // so trata null/undefined como vazio (0 continua "0", nao "").
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function escapeAttr(s) {
     return escapeHtml(s).replace(/`/g, "&#96;");
@@ -1890,6 +1912,360 @@ function renderHeatGenerator() {
     };
     $("#heat-copy-dryrun").onclick = () => {
         navigator.clipboard.writeText($("#heat-dryrun-cmd").textContent);
+        toast("Comando copiado");
+    };
+}
+
+// ---------------------------------------------------------------------
+// Gerador de manifesto Kubernetes — namespace, deployment, service e
+// configmap escolhidos por checkboxes, mesmo mecanismo de "colar output e
+// criar lista" (📥) do gerador Heat, mas produzindo YAML multi-documento
+// (separado por "---", convencao do kubectl) em vez de um template Heat.
+// ---------------------------------------------------------------------
+
+const K8S_GEN_PASTE_TARGET = "__k8s__";
+
+const K8S_VAR_LIST_COMMAND = {
+    namespace_existente: "kubectl get namespaces",
+};
+
+const k8sGenState = {
+    educational: true,
+    namespace: false,
+    deployment: false,
+    service: false,
+    configmap: false,
+    values: {
+        ficheiro: "manifesto.yaml",
+        nome_namespace: "",
+        namespace_existente: "",
+        nome_deployment: "",
+        imagem_container: "",
+        replicas: 1,
+        porta_container: 80,
+        nome_service: "",
+        tipo_service: "ClusterIP",
+        porta_service: 80,
+        porta_alvo: 80,
+        app_existente: "",
+        nome_configmap: "",
+        configmap_dados: "CHAVE=valor",
+    },
+    pasteOptions: {},
+};
+
+function k8sFileName() {
+    return k8sGenState.values.ficheiro.trim() || "manifesto.yaml";
+}
+function k8sApplyCmd() {
+    return `kubectl apply -f ${k8sFileName()}`;
+}
+function k8sDryRunCmd() {
+    return `kubectl apply -f ${k8sFileName()} --dry-run=client`;
+}
+// namespace efetivo a usar nos recursos: o criado agora, ou um ja existente
+// indicado pelo utilizador, ou "default" se nada for dito — tal como o
+// kubectl faz quando --namespace nao e passado.
+function k8sNamespaceName() {
+    const s = k8sGenState;
+    const v = s.values;
+    if (s.namespace && v.nome_namespace.trim()) return v.nome_namespace.trim();
+    return v.namespace_existente.trim() || "default";
+}
+
+function buildK8sManifest() {
+    const s = k8sGenState;
+    const v = s.values;
+    const docs = [];
+
+    const comment = (lines, ...text) => {
+        if (s.educational) text.forEach((t) => lines.push(`# ${t}`));
+    };
+
+    const ns = k8sNamespaceName();
+    const hasNamespace = s.namespace && v.nome_namespace.trim();
+    const hasDeployment = s.deployment && v.nome_deployment.trim();
+    // selector do Service: usa o Deployment criado agora, ou um "app" ja
+    // existente indicado pelo utilizador (para ligar a pods que ja existem).
+    const appSelector = hasDeployment ? v.nome_deployment.trim() : v.app_existente.trim();
+
+    if (hasNamespace) {
+        const lines = [];
+        comment(lines, "Namespace: agrupa os recursos abaixo, isolando-os de outros", "projetos/equipas dentro do mesmo cluster.");
+        lines.push("apiVersion: v1", "kind: Namespace", "metadata:", `  name: ${v.nome_namespace.trim()}`);
+        docs.push(lines.join("\n"));
+    }
+
+    if (hasDeployment) {
+        const lines = [];
+        comment(
+            lines,
+            "Deployment: garante que 'replicas' copias dos pods (com a imagem",
+            "indicada) estao sempre a correr, recriando-os se falharem."
+        );
+        lines.push(
+            "apiVersion: apps/v1",
+            "kind: Deployment",
+            "metadata:",
+            `  name: ${v.nome_deployment.trim()}`,
+            `  namespace: ${ns}`,
+            "spec:",
+            `  replicas: ${Math.max(1, Number(v.replicas) || 1)}`,
+            "  selector:",
+            "    matchLabels:",
+            `      app: ${v.nome_deployment.trim()}`,
+            "  template:",
+            "    metadata:",
+            "      labels:",
+            `        app: ${v.nome_deployment.trim()}`,
+            "    spec:",
+            "      containers:",
+            `        - name: ${v.nome_deployment.trim()}`,
+            `          image: ${v.imagem_container.trim() || "imagem:tag"}`,
+            "          ports:",
+            `            - containerPort: ${Number(v.porta_container) || 80}`
+        );
+        docs.push(lines.join("\n"));
+    }
+
+    if (s.service && v.nome_service.trim()) {
+        const lines = [];
+        comment(
+            lines,
+            "Service: expõe os pods do Deployment (via o selector 'app') num",
+            "endereço estavel dentro (ou fora, consoante o 'type') do cluster."
+        );
+        lines.push(
+            "apiVersion: v1",
+            "kind: Service",
+            "metadata:",
+            `  name: ${v.nome_service.trim()}`,
+            `  namespace: ${ns}`,
+            "spec:",
+            `  type: ${v.tipo_service}`,
+            "  selector:",
+            `    app: ${appSelector || v.nome_service.trim()}`,
+            "  ports:",
+            `    - port: ${Number(v.porta_service) || 80}`,
+            `      targetPort: ${Number(v.porta_alvo) || 80}`
+        );
+        docs.push(lines.join("\n"));
+    }
+
+    if (s.configmap && v.nome_configmap.trim()) {
+        const lines = [];
+        comment(lines, "ConfigMap: configuracao (pares chave/valor) que os pods podem", "montar como variaveis de ambiente ou ficheiros.");
+        lines.push("apiVersion: v1", "kind: ConfigMap", "metadata:", `  name: ${v.nome_configmap.trim()}`, `  namespace: ${ns}`, "data:");
+        const pairs = v.configmap_dados
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((l) => {
+                const eq = l.indexOf("=");
+                return eq === -1 ? [l, ""] : [l.slice(0, eq).trim(), l.slice(eq + 1).trim()];
+            });
+        if (pairs.length) {
+            pairs.forEach(([k, val]) => lines.push(`  ${k}: ${heatYamlString(val)}`));
+        } else {
+            lines.push("  {}");
+        }
+        docs.push(lines.join("\n"));
+    }
+
+    if (!docs.length) {
+        const lines = [];
+        comment(lines, "Marca pelo menos uma opcao acima (Namespace, Deployment, Service ou ConfigMap).");
+        lines.push("{}");
+        return lines.join("\n") + "\n";
+    }
+
+    return docs.join("\n---\n") + "\n";
+}
+
+function k8sCheckboxHtml(key, label) {
+    return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.9rem">
+        <input type="checkbox" data-k8s-toggle="${key}" ${k8sGenState[key] ? "checked" : ""} style="width:16px;height:16px;accent-color:var(--primary)">
+        ${escapeHtml(label)}
+    </label>`;
+}
+
+function k8sTextField(key, placeholder, type = "text") {
+    const value = k8sGenState.values[key];
+    return `<div class="tpl-control"><input type="${type}" class="tpl-input" data-k8s-input="${key}" placeholder="${escapeAttr(placeholder)}" value="${escapeAttr(String(value ?? ""))}"></div>`;
+}
+
+function k8sSelectField(key, options) {
+    const value = k8sGenState.values[key];
+    return `<div class="tpl-control"><select class="tpl-select" data-k8s-select="${key}">
+        ${options.map((o) => `<option value="${escapeAttr(o)}" ${value === o ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
+    </select></div>`;
+}
+
+function k8sPasteField(key, placeholder) {
+    const options = k8sGenState.pasteOptions[key];
+    const value = k8sGenState.values[key] || "";
+    if (options) {
+        return `<div class="tpl-control">
+            <select class="tpl-select" data-k8s-select="${key}">
+                ${options.map((o) => `<option value="${escapeAttr(o)}" ${value === o ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}
+            </select>
+            <button class="tpl-control-btn" data-k8s-clear="${key}" title="Voltar a texto livre">✕</button>
+        </div>`;
+    }
+    return `<div class="tpl-control">
+        <input class="tpl-input" data-k8s-input="${key}" placeholder="${escapeAttr(placeholder)}" value="${escapeAttr(value)}">
+        <button class="tpl-control-btn" data-k8s-paste="${key}" title="Colar output e criar lista">📥</button>
+    </div>`;
+}
+
+function renderK8sGenerator() {
+    const s = k8sGenState;
+    const v = s.values;
+
+    let fieldsHtml = `<div class="tpl-vars">
+        ${heatFieldWrap("Nome do ficheiro", "Nome a dar ao ficheiro .yaml quando o descarregares.", k8sTextField("ficheiro", "manifesto.yaml"))}
+    </div>`;
+
+    if (s.namespace) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome do namespace", "Namespace a criar.", k8sTextField("nome_namespace", "minha-app"))}
+        </div>`;
+    }
+
+    const needsNamespaceExisting = !s.namespace && (s.deployment || s.service || s.configmap);
+    if (needsNamespaceExisting) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Namespace existente", "Onde colocar os recursos abaixo (em branco = 'default').", k8sPasteField("namespace_existente", "default"))}
+        </div>`;
+    }
+
+    if (s.deployment) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome do deployment", "Nome do deployment (e dos pods que gera).", k8sTextField("nome_deployment", "minha-app"))}
+            ${heatFieldWrap("Imagem do container", "Imagem e tag a usar (ex.: nginx:1.27).", k8sTextField("imagem_container", "nginx:1.27"))}
+            ${heatFieldWrap("Réplicas", "Quantos pods manter sempre a correr.", k8sTextField("replicas", "3", "number"))}
+            ${heatFieldWrap("Porta do container", "Porta em que a aplicação escuta dentro do container.", k8sTextField("porta_container", "80", "number"))}
+        </div>`;
+    }
+
+    if (s.service) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome do service", "Nome a dar ao service.", k8sTextField("nome_service", "minha-app"))}
+            ${heatFieldWrap("Tipo", "ClusterIP (só dentro do cluster), NodePort ou LoadBalancer (acesso externo).", k8sSelectField("tipo_service", ["ClusterIP", "NodePort", "LoadBalancer"]))}
+            ${heatFieldWrap("Porta do service", "Porta exposta pelo service.", k8sTextField("porta_service", "80", "number"))}
+            ${heatFieldWrap("Porta de destino", "Porta do container para onde o tráfego é encaminhado.", k8sTextField("porta_alvo", "80", "number"))}
+            ${!s.deployment ? heatFieldWrap("App existente (selector)", "Valor do label 'app' dos pods já existentes a expor (consulta com 'kubectl get pods --show-labels').", k8sTextField("app_existente", "minha-app")) : ""}
+        </div>`;
+    }
+
+    if (s.configmap) {
+        fieldsHtml += `<div class="tpl-vars">
+            ${heatFieldWrap("Nome do configmap", "Nome a dar ao configmap.", k8sTextField("nome_configmap", "minha-config"))}
+        </div>
+        <div class="tpl-var-field" style="margin:0 0 12px">
+            <label>Dados (um CHAVE=valor por linha) <span class="tpl-hint" title="Cada linha vira uma entrada em 'data:'. Ex.: LOG_LEVEL=info">?</span></label>
+            <textarea data-k8s-textarea="configmap_dados" rows="4" style="width:100%;font-family:'JetBrains Mono',monospace;font-size:0.82rem;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">${escapeHtml(v.configmap_dados)}</textarea>
+        </div>`;
+    }
+
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">Gerar Manifesto (K8s) — Kubernetes</div>
+                <div class="desc">
+                    Marca o que queres criar. O manifesto é gerado em baixo, pronto para
+                    <span class="mono" id="k8s-apply-cmd" style="padding:1px 6px">${escapeHtml(k8sApplyCmd())}</span>.
+                </div>
+                <div style="margin-top:10px">
+                    ${k8sCheckboxHtml("educational", "Modo educativo (comentários # a explicar cada bloco do YAML)")}
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:16px;margin:16px 0">
+                    ${k8sCheckboxHtml("namespace", "Namespace")}
+                    ${k8sCheckboxHtml("deployment", "Deployment")}
+                    ${k8sCheckboxHtml("service", "Service")}
+                    ${k8sCheckboxHtml("configmap", "ConfigMap")}
+                </div>
+                ${fieldsHtml}
+                <div style="display:flex;gap:8px;margin:16px 0 10px">
+                    <button class="primary" id="k8s-copy">Copiar YAML</button>
+                    <button class="ghost" id="k8s-download">Descarregar .yaml</button>
+                </div>
+                <pre class="mono" id="k8s-output" style="display:block;white-space:pre;overflow-x:auto;padding:14px;font-size:0.8rem;line-height:1.5">${escapeHtml(buildK8sManifest())}</pre>
+                <div class="desc" style="margin-top:14px">
+                    Antes de aplicar a sério, valida o manifesto (não cria nada, só verifica):
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+                    <span class="mono" id="k8s-dryrun-cmd" style="flex:1">${escapeHtml(k8sDryRunCmd())}</span>
+                    <button class="tpl-control-btn" id="k8s-copy-dryrun" title="Copiar comando" style="border:1px solid var(--border);border-radius:7px">${COPY_ICON_SVG}</button>
+                </div>
+            </div>
+        </div>`;
+
+    const refreshOutput = () => {
+        const pre = $("#k8s-output");
+        if (pre) pre.textContent = buildK8sManifest();
+        const applyCmd = $("#k8s-apply-cmd");
+        if (applyCmd) applyCmd.textContent = k8sApplyCmd();
+        const dryrunCmd = $("#k8s-dryrun-cmd");
+        if (dryrunCmd) dryrunCmd.textContent = k8sDryRunCmd();
+    };
+
+    listEl.querySelectorAll("[data-k8s-toggle]").forEach((el) => {
+        el.onchange = () => {
+            s[el.dataset.k8sToggle] = el.checked;
+            renderK8sGenerator();
+        };
+    });
+    listEl.querySelectorAll("[data-k8s-input]").forEach((el) => {
+        el.oninput = () => {
+            v[el.dataset.k8sInput] = el.value;
+            refreshOutput();
+        };
+    });
+    listEl.querySelectorAll("[data-k8s-select]").forEach((el) => {
+        el.onchange = () => {
+            v[el.dataset.k8sSelect] = el.value;
+            refreshOutput();
+        };
+    });
+    listEl.querySelectorAll("[data-k8s-textarea]").forEach((el) => {
+        el.oninput = () => {
+            v[el.dataset.k8sTextarea] = el.value;
+            refreshOutput();
+        };
+    });
+    listEl.querySelectorAll("[data-k8s-paste]").forEach((btn) => {
+        btn.onclick = () => {
+            pasteTarget = { scenarioId: K8S_GEN_PASTE_TARGET, varName: btn.dataset.k8sPaste };
+            const suggestion = K8S_VAR_LIST_COMMAND[pasteTarget.varName];
+            $("#paste-suggestion").innerHTML = suggestion
+                ? `Corre <span class="mono" style="font-size:0.8rem">${escapeHtml(suggestion)}</span> e cola o resultado abaixo.`
+                : "";
+            $("#paste-dialog").showModal();
+        };
+    });
+    listEl.querySelectorAll("[data-k8s-clear]").forEach((btn) => {
+        btn.onclick = () => {
+            delete s.pasteOptions[btn.dataset.k8sClear];
+            renderK8sGenerator();
+        };
+    });
+
+    $("#k8s-copy").onclick = () => {
+        navigator.clipboard.writeText(buildK8sManifest());
+        toast("YAML copiado");
+    };
+    $("#k8s-download").onclick = () => {
+        const blob = new Blob([buildK8sManifest()], { type: "text/yaml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = k8sFileName();
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+    $("#k8s-copy-dryrun").onclick = () => {
+        navigator.clipboard.writeText($("#k8s-dryrun-cmd").textContent);
         toast("Comando copiado");
     };
 }
