@@ -10,6 +10,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
+    /* diz ao browser que a pagina e escura por defeito, para os controlos
+       nativos (menu do <select>, scrollbars do SO, etc.) usarem texto/fundo
+       com contraste correto — sem isto ficam brancos e ilegiveis mesmo com
+       o resto da pagina em tema escuro. */
+    color-scheme: dark;
     --primary: #6d5ef8;
     --accent: #1baf7a;
     --negative: #e05a5a;
@@ -26,6 +31,7 @@
 }
 @media (prefers-color-scheme: light) {
     :root {
+        color-scheme: light;
         --bg: #f7f8fa;
         --sidebar-bg: #ffffff;
         --card-bg: #ffffff;
