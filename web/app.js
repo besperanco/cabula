@@ -2467,6 +2467,18 @@ const KNOWN_HEAT_RESOURCE_CHECKS = {
         if (!props?.resource_def) err('Falta "resource_def" nas properties.');
         else if (!props.resource_def.type) err('"resource_def" sem "type".');
     },
+    "OS::Neutron::FloatingIPAssociation": (props, err, warn) => {
+        if (!props?.floatingip_id) err('Falta "floatingip_id" nas properties.');
+        if (!props?.port_id && !props?.fixed_ip_address) err('Falta "port_id" (ou "fixed_ip_address") nas properties.');
+    },
+    "OS::Neutron::SecurityGroup": (props, err, warn) => {
+        if (!Array.isArray(props?.rules)) return;
+        props.rules.forEach((r, i) => {
+            ["port_range_min", "port_range_max"].forEach((f) => {
+                if (r?.[f] != null && typeof r[f] !== "number") err(`Regra #${i + 1}: "${f}" devia ser um número, não texto ("${r[f]}").`);
+            });
+        });
+    },
 };
 
 // para alguns pares (tipo de recurso, propriedade), sabe-se de antemao que
@@ -2619,6 +2631,7 @@ const K8S_KIND_API_VERSIONS = {
     Job: ["batch/v1"], CronJob: ["batch/v1"],
     Role: ["rbac.authorization.k8s.io/v1"], RoleBinding: ["rbac.authorization.k8s.io/v1"],
     ClusterRole: ["rbac.authorization.k8s.io/v1"], ClusterRoleBinding: ["rbac.authorization.k8s.io/v1"],
+    HorizontalPodAutoscaler: ["autoscaling/v2", "autoscaling/v2beta2"],
 };
 
 function validateK8sDoc(doc, index, total) {
@@ -2695,6 +2708,39 @@ function validateK8sDoc(doc, index, total) {
         if (!doc.spec?.resources?.requests?.storage) err('falta "spec.resources.requests.storage".');
     }
 
+    // "data" (ao contrario de "stringData") so aceita valores em texto — um
+    // numero ou boolean sem aspas ali e rejeitado pela API do Kubernetes.
+    if (doc.kind === "ConfigMap" && doc.data && typeof doc.data === "object") {
+        Object.entries(doc.data).forEach(([k, v]) => {
+            if (typeof v !== "string") err(`data."${k}" tem de ser texto (tens ${typeof v}: ${v}) — a API rejeita valores não-string em "data".`);
+        });
+    }
+
+    if (doc.kind === "Ingress") {
+        (doc.spec?.rules || []).forEach((rule, ri) => {
+            (rule.http?.paths || []).forEach((p, pi) => {
+                const num = p.backend?.service?.port?.number;
+                if (num != null && typeof num !== "number") {
+                    err(`rule #${ri + 1}, path #${pi + 1}: "backend.service.port.number" devia ser um número, não texto ("${num}").`);
+                }
+            });
+        });
+    }
+
+    if (doc.kind === "HorizontalPodAutoscaler") {
+        if (!doc.spec?.scaleTargetRef?.name) err('falta "spec.scaleTargetRef.name".');
+        const { minReplicas, maxReplicas } = doc.spec || {};
+        if (minReplicas != null && typeof minReplicas !== "number") err('"spec.minReplicas" devia ser um número.');
+        if (maxReplicas != null && typeof maxReplicas !== "number") err('"spec.maxReplicas" devia ser um número.');
+        if (typeof minReplicas === "number" && typeof maxReplicas === "number" && minReplicas > maxReplicas) {
+            err(`"spec.minReplicas" (${minReplicas}) é maior que "spec.maxReplicas" (${maxReplicas}) — nunca vai escalar.`);
+        }
+        (doc.spec?.metrics || []).forEach((m, i) => {
+            const val = m.resource?.target?.averageUtilization;
+            if (val != null && typeof val !== "number") err(`metrics[${i}].resource.target.averageUtilization devia ser um número, não texto ("${val}").`);
+        });
+    }
+
     return issues;
 }
 
@@ -2727,6 +2773,7 @@ function validateK8sCrossDoc(docs) {
     const configMapNames = new Set(docs.filter((d) => d.kind === "ConfigMap").map((d) => d.metadata?.name).filter(Boolean));
     const secretNames = new Set(docs.filter((d) => d.kind === "Secret").map((d) => d.metadata?.name).filter(Boolean));
     const serviceNames = new Set(docs.filter((d) => d.kind === "Service").map((d) => d.metadata?.name).filter(Boolean));
+    const pvcNames = new Set(docs.filter((d) => d.kind === "PersistentVolumeClaim").map((d) => d.metadata?.name).filter(Boolean));
 
     if (workloads.length) {
         docs.filter((d) => d.kind === "Service" && d.spec?.selector).forEach((svc) => {
@@ -2778,7 +2825,18 @@ function validateK8sCrossDoc(docs) {
         k8sWorkloadVolumes(w).forEach((v) => {
             if (v.configMap?.name && !configMapNames.has(v.configMap.name)) warn(`${wname}: volume "${v.name}" referencia o ConfigMap "${v.configMap.name}", que não está neste ficheiro (pode existir no cluster).`);
             if (v.secret?.secretName && !secretNames.has(v.secret.secretName)) warn(`${wname}: volume "${v.name}" referencia o Secret "${v.secret.secretName}", que não está neste ficheiro (pode existir no cluster).`);
+            if (v.persistentVolumeClaim?.claimName && !pvcNames.has(v.persistentVolumeClaim.claimName)) {
+                warn(`${wname}: volume "${v.name}" referencia a PVC "${v.persistentVolumeClaim.claimName}", que não está neste ficheiro (pode existir no cluster).`);
+            }
         });
+    });
+
+    docs.filter((d) => d.kind === "HorizontalPodAutoscaler" && d.spec?.scaleTargetRef?.name).forEach((hpa) => {
+        const ref = hpa.spec.scaleTargetRef;
+        const target = docs.find((d) => d.kind === ref.kind && d.metadata?.name === ref.name);
+        if (!target) {
+            warn(`HorizontalPodAutoscaler "${hpa.metadata?.name}": scaleTargetRef aponta para ${ref.kind || "?"} "${ref.name}", que não está neste ficheiro (pode existir no cluster).`);
+        }
     });
 
     return issues;
@@ -2819,6 +2877,15 @@ function validateContainers(containers, err, warn) {
                 if (val == null) return;
                 if (!K8S_QUANTITY_RE.test(String(val))) {
                     warn(`${tag}: resources.${kind}.${field} = "${val}" não parece uma quantidade válida (ex.: "500m" para CPU, "256Mi" para memória).`);
+                }
+            });
+        });
+        ["readinessProbe", "livenessProbe", "startupProbe"].forEach((probeKind) => {
+            const probe = c[probeKind];
+            if (!probe) return;
+            ["initialDelaySeconds", "periodSeconds", "timeoutSeconds", "successThreshold", "failureThreshold"].forEach((field) => {
+                if (probe[field] != null && typeof probe[field] !== "number") {
+                    err(`${tag}: ${probeKind}.${field} devia ser um número, não texto ("${probe[field]}").`);
                 }
             });
         });
