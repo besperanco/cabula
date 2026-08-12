@@ -268,6 +268,14 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
     50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 25%, transparent); }
 }
 .highlight-pulse { animation: highlight-pulse 1s ease-in-out 2; border-color: var(--primary) !important; }
+.validation-panel {
+    margin: 14px 0; padding: 10px 14px; border-radius: 10px;
+    background: var(--code-bg); border: 1px solid var(--border);
+}
+.validation-item { display: flex; gap: 8px; align-items: flex-start; font-size: 0.83rem; padding: 4px 0; line-height: 1.4; }
+.validation-item.error { color: var(--negative); }
+.validation-item.warning { color: var(--warning); }
+.validation-ok { color: var(--accent); font-size: 0.85rem; margin: 14px 0; }
 .tpl-vars {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
     gap: 12px 14px; margin: 12px 0 6px; padding: 14px; border-radius: 10px; background: var(--code-bg);
