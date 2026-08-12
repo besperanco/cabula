@@ -2477,6 +2477,9 @@ const KNOWN_HEAT_RESOURCE_CHECKS = {
             ["port_range_min", "port_range_max"].forEach((f) => {
                 if (r?.[f] != null && typeof r[f] !== "number") err(`Regra #${i + 1}: "${f}" devia ser um número, não texto ("${r[f]}").`);
             });
+            if (typeof r?.port_range_min === "number" && typeof r?.port_range_max === "number" && r.port_range_min > r.port_range_max) {
+                err(`Regra #${i + 1}: "port_range_min" (${r.port_range_min}) é maior que "port_range_max" (${r.port_range_max}) — a regra nunca permite tráfego nenhum.`);
+            }
         });
     },
 };
