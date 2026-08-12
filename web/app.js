@@ -2418,6 +2418,14 @@ function renderK8sGenerator() {
 // dos geradores, mas sobre o documento tal como foi colado.
 // ---------------------------------------------------------------------
 
+// verifica que uma property, se existir, e um numero (JS) e nao uma string
+// como "4" ou "20" — erro tipico de quem escreve YAML a pensar em Ansible/
+// Terraform, onde tudo costuma ir entre aspas.
+function numericPropIssue(props, field) {
+    if (!props || props[field] == null) return null;
+    return typeof props[field] === "number" ? null : `"${field}" devia ser um número, não texto ("${props[field]}").`;
+}
+
 const KNOWN_HEAT_RESOURCE_CHECKS = {
     "OS::Neutron::Net": (props, err, warn) => {
         if (!props?.name) warn('Falta "name" nas properties.');
@@ -2425,6 +2433,8 @@ const KNOWN_HEAT_RESOURCE_CHECKS = {
     "OS::Neutron::Subnet": (props, err, warn) => {
         if (!props?.cidr) err('Falta "cidr" nas properties.');
         if (!props?.network_id && !props?.network) err('Falta "network_id" (ou "network") nas properties.');
+        const issue = numericPropIssue(props, "ip_version");
+        if (issue) err(issue);
     },
     "OS::Neutron::Router": (props, err, warn) => {
         if (!props?.external_gateway_info) warn('Sem "external_gateway_info" — o router fica sem gateway externo.');
@@ -2440,14 +2450,25 @@ const KNOWN_HEAT_RESOURCE_CHECKS = {
     "OS::Neutron::FloatingIP": (props, err, warn) => {
         if (!props?.floating_network && !props?.floating_network_id) err('Falta "floating_network" (ou "floating_network_id") nas properties.');
     },
+    "OS::Cinder::Volume": (props, err, warn) => {
+        if (!props?.size) err('Falta "size" nas properties.');
+        else {
+            const issue = numericPropIssue(props, "size");
+            if (issue) err(issue);
+        }
+    },
 };
 
-// procura recursivamente todos os "{ get_resource: X }" dentro de um valor
-// ja interpretado pelo js-yaml (objetos/arrays JS, nao texto).
-function collectGetResourceRefs(value, refs = []) {
+// procura recursivamente todos os "{ get_resource: X }" (ou "{ get_param: X
+// }"/"{ get_param: [X, ...] }") dentro de um valor ja interpretado pelo
+// js-yaml (objetos/arrays JS, nao texto). "key" e "get_resource" ou
+// "get_param".
+function collectIntrinsicRefs(value, key, refs = []) {
     if (value && typeof value === "object") {
-        if (!Array.isArray(value) && typeof value.get_resource === "string") refs.push(value.get_resource);
-        for (const v of Object.values(value)) collectGetResourceRefs(v, refs);
+        const found = value[key];
+        if (typeof found === "string") refs.push(found);
+        else if (Array.isArray(found) && typeof found[0] === "string") refs.push(found[0]); // get_param: [nome, chave]
+        for (const v of Object.values(value)) collectIntrinsicRefs(v, key, refs);
     }
     return refs;
 }
@@ -2481,8 +2502,18 @@ function validateHeatDoc(doc) {
         if (check) check(res.properties, (m) => err(`Recurso "${key}" (${res.type}): ${m}`), (m) => warn(`Recurso "${key}" (${res.type}): ${m}`));
     }
 
-    const refs = collectGetResourceRefs(resources);
-    [...new Set(refs)].filter((r) => !(r in resources)).forEach((r) => err(`"get_resource: ${r}" aponta para um recurso que não existe no ficheiro.`));
+    const resourceRefs = collectIntrinsicRefs(resources, "get_resource");
+    [...new Set(resourceRefs)].filter((r) => !(r in resources)).forEach((r) => err(`"get_resource: ${r}" aponta para um recurso que não existe no ficheiro.`));
+
+    // outputs tambem pode ter get_resource/get_param — inclui na verificacao,
+    // nao so os resources.
+    const paramRefs = [...collectIntrinsicRefs(resources, "get_param"), ...collectIntrinsicRefs(doc.outputs, "get_param")];
+    const paramNames = doc.parameters && typeof doc.parameters === "object" ? Object.keys(doc.parameters) : [];
+    [...new Set(paramRefs)].filter((p) => !paramNames.includes(p)).forEach((p) => err(`"get_param: ${p}" aponta para um parâmetro que não está definido em "parameters".`));
+    paramNames.filter((p) => !paramRefs.includes(p)).forEach((p) => warn(`Parâmetro "${p}" está definido mas nunca é usado (nenhum "get_param: ${p}").`));
+
+    const outputResourceRefs = collectIntrinsicRefs(doc.outputs, "get_resource");
+    [...new Set(outputResourceRefs)].filter((r) => !(r in resources)).forEach((r) => err(`Em "outputs", "get_resource: ${r}" aponta para um recurso que não existe.`));
 
     return issues;
 }
