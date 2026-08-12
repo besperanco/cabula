@@ -294,6 +294,14 @@ button.ghost:hover { border-color: var(--text-dim); background: var(--hover); }
     font-family: inherit; font-size: 0.83rem; padding: 7px 9px; height: 32px;
 }
 .tpl-control input:focus, .tpl-control select:focus { outline: none; }
+/* "color-scheme" no :root nem sempre chega para o popup nativo do <select>
+   no Chromium/Windows — as opcoes nao realcadas caem no branco do sistema.
+   Forcar aqui, mais o fundo/cor explicitos nas <option>, resolve nos dois temas. */
+select { color-scheme: dark; }
+select option { background: var(--card-bg); color: var(--text); }
+@media (prefers-color-scheme: light) {
+    select { color-scheme: light; }
+}
 .tpl-control-btn {
     flex-shrink: 0; display: flex; align-items: center; justify-content: center;
     width: 30px; border: none; border-left: 1px solid var(--border); background: transparent;
