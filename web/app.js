@@ -1563,6 +1563,66 @@ function heatYamlString(val) {
     return JSON.stringify(String(val ?? ""));
 }
 
+const CIDR_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/;
+
+// HTML partilhado pelo corretor do Heat e do K8s: lista de erros/avisos, ou
+// uma confirmacao verde se nao houver nenhum.
+function renderValidationPanel(issues) {
+    if (!issues.length) {
+        return `<div class="validation-ok">✅ Sem problemas encontrados na verificação estrutural.</div>`;
+    }
+    return `<div class="validation-panel">${issues
+        .map(
+            (i) => `<div class="validation-item ${i.level}">
+                <span>${i.level === "error" ? "❌" : "⚠️"}</span><span>${escapeHtml(i.message)}</span>
+            </div>`
+        )
+        .join("")}</div>`;
+}
+
+// Corretor do gerador Heat: nao corre nada contra uma cloud real (isso
+// exigiria credenciais OpenStack), mas verifica campos obrigatorios e
+// erros estruturais obvios antes de sequer chegares ao "openstack stack
+// create". Devolve uma lista de { level: "error"|"warning", message }.
+function heatValidate() {
+    const s = heatGenState;
+    const v = s.values;
+    const issues = [];
+    const err = (message) => issues.push({ level: "error", message });
+    const warn = (message) => issues.push({ level: "warning", message });
+
+    if (!s.network && !s.subnet && !s.router && !s.instances) {
+        err("Nada selecionado — marca pelo menos Rede, Sub-rede, Router ou Instância(s).");
+        return issues;
+    }
+
+    if (s.network && !v.nome_rede.trim()) err("Rede marcada mas sem \"Nome da rede\".");
+
+    if (s.subnet) {
+        if (!v.nome_subnet.trim()) err("Sub-rede marcada mas sem \"Nome da sub-rede\".");
+        if (v.cidr.trim() && !CIDR_RE.test(v.cidr.trim())) err(`CIDR "${v.cidr.trim()}" não parece válido (formato esperado: 192.168.1.0/24).`);
+        if (!s.network && !v.rede_existente.trim()) err("Sub-rede sem Rede marcada nem \"Rede existente\" — não vai saber onde criar a sub-rede.");
+    }
+
+    if (s.router) {
+        if (!v.nome_router.trim()) err("Router marcado mas sem \"Nome do router\".");
+        if (!v.rede_externa.trim()) warn("Router sem \"Rede externa\" — fica sem gateway definido (sem acesso de saída).");
+    }
+
+    if (s.instances) {
+        if (!v.imagem.trim()) err("Instância(s) marcadas mas sem \"Imagem\".");
+        if (!v.flavor.trim()) err("Instância(s) marcadas mas sem \"Flavor\".");
+        if (!s.network && !v.rede_existente.trim()) err("Instância(s) sem Rede marcada nem \"Rede existente\" — não vão ter a que rede ligar.");
+        const count = Math.max(1, Math.min(20, Number(v.instanceCount) || 1));
+        const names = v.instanceNames.slice(0, count).map((n) => n.trim()).filter(Boolean);
+        const dup = names.filter((n, i) => names.indexOf(n) !== i);
+        if (dup.length) warn(`Nomes de instância repetidos: ${[...new Set(dup)].join(", ")}.`);
+        if (v.floatingIp && !s.router) warn("\"Ligar ao router\" está marcado mas o Router não está — o IP flutuante vai ficar sem gateway.");
+    }
+
+    return issues;
+}
+
 function buildHeatTemplate() {
     const s = heatGenState;
     const v = s.values;
@@ -1814,6 +1874,7 @@ function renderHeatGenerator() {
                     ${heatCheckboxHtml("instances", "Instância(s)")}
                 </div>
                 ${fieldsHtml}
+                <div id="heat-validation">${renderValidationPanel(heatValidate())}</div>
                 <div style="display:flex;gap:8px;margin:16px 0 10px">
                     <button class="primary" id="heat-copy">Copiar YAML</button>
                     <button class="ghost" id="heat-download">Descarregar .yaml</button>
@@ -1836,6 +1897,8 @@ function renderHeatGenerator() {
         if (createCmd) createCmd.textContent = heatCreateCmd();
         const dryrunCmd = $("#heat-dryrun-cmd");
         if (dryrunCmd) dryrunCmd.textContent = heatDryRunCmd();
+        const validation = $("#heat-validation");
+        if (validation) validation.innerHTML = renderValidationPanel(heatValidate());
     };
 
     listEl.querySelectorAll("[data-heat-toggle]").forEach((el) => {
@@ -1971,6 +2034,68 @@ function k8sNamespaceName() {
     const v = s.values;
     if (s.namespace && v.nome_namespace.trim()) return v.nome_namespace.trim();
     return v.namespace_existente.trim() || "default";
+}
+
+// nomes de recursos Kubernetes tem de ser um "DNS-1123 label": minusculas,
+// numeros e hifens, sem comecar/acabar em hifen.
+const K8S_NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+function k8sNameIssue(name) {
+    return K8S_NAME_RE.test(name) ? null : "só pode ter minúsculas, números e hífens, sem começar/acabar em hífen (RFC 1123)";
+}
+
+// Corretor do gerador K8s: tal como o do Heat, verifica campos obrigatorios
+// e regras estruturais (nomes validos, portas no intervalo certo, etc.) sem
+// precisar de um cluster real ligado.
+function k8sValidate() {
+    const s = k8sGenState;
+    const v = s.values;
+    const issues = [];
+    const err = (message) => issues.push({ level: "error", message });
+    const warn = (message) => issues.push({ level: "warning", message });
+    const validPort = (n) => Number.isInteger(n) && n >= 1 && n <= 65535;
+
+    if (!s.namespace && !s.deployment && !s.service && !s.configmap) {
+        err("Nada selecionado — marca pelo menos Namespace, Deployment, Service ou ConfigMap.");
+        return issues;
+    }
+
+    if (s.namespace) {
+        if (!v.nome_namespace.trim()) err("Namespace marcado mas sem \"Nome do namespace\".");
+        else {
+            const issue = k8sNameIssue(v.nome_namespace.trim());
+            if (issue) err(`Nome do namespace inválido: ${issue}.`);
+        }
+    }
+
+    if (s.deployment) {
+        if (!v.nome_deployment.trim()) err("Deployment marcado mas sem \"Nome do deployment\".");
+        else {
+            const issue = k8sNameIssue(v.nome_deployment.trim());
+            if (issue) err(`Nome do deployment inválido: ${issue}.`);
+        }
+        if (!v.imagem_container.trim()) err("Deployment marcado mas sem \"Imagem do container\".");
+        if (!(Number(v.replicas) >= 1)) err("\"Réplicas\" tem de ser pelo menos 1.");
+        if (!validPort(Number(v.porta_container))) warn(`Porta do container (${v.porta_container}) fora do intervalo válido (1–65535).`);
+    }
+
+    if (s.service) {
+        if (!v.nome_service.trim()) err("Service marcado mas sem \"Nome do service\".");
+        if (!validPort(Number(v.porta_service))) warn(`Porta do service (${v.porta_service}) fora do intervalo válido (1–65535).`);
+        if (!validPort(Number(v.porta_alvo))) warn(`Porta de destino (${v.porta_alvo}) fora do intervalo válido (1–65535).`);
+        if (!s.deployment && !v.app_existente.trim()) warn("Service sem Deployment marcado nem \"App existente (selector)\" — não vai encontrar nenhum pod.");
+    }
+
+    if (s.configmap) {
+        if (!v.nome_configmap.trim()) err("ConfigMap marcado mas sem \"Nome do configmap\".");
+        const linhasSemIgual = v.configmap_dados
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .filter((l) => !l.includes("="));
+        if (linhasSemIgual.length) warn(`Linha(s) sem "=" nos dados do ConfigMap vão ficar com valor vazio: ${linhasSemIgual.join(", ")}.`);
+    }
+
+    return issues;
 }
 
 function buildK8sManifest() {
@@ -2186,6 +2311,7 @@ function renderK8sGenerator() {
                     ${k8sCheckboxHtml("configmap", "ConfigMap")}
                 </div>
                 ${fieldsHtml}
+                <div id="k8s-validation">${renderValidationPanel(k8sValidate())}</div>
                 <div style="display:flex;gap:8px;margin:16px 0 10px">
                     <button class="primary" id="k8s-copy">Copiar YAML</button>
                     <button class="ghost" id="k8s-download">Descarregar .yaml</button>
@@ -2208,6 +2334,8 @@ function renderK8sGenerator() {
         if (applyCmd) applyCmd.textContent = k8sApplyCmd();
         const dryrunCmd = $("#k8s-dryrun-cmd");
         if (dryrunCmd) dryrunCmd.textContent = k8sDryRunCmd();
+        const validation = $("#k8s-validation");
+        if (validation) validation.innerHTML = renderValidationPanel(k8sValidate());
     };
 
     listEl.querySelectorAll("[data-k8s-toggle]").forEach((el) => {
