@@ -2506,25 +2506,85 @@ function validateK8sDoc(doc, index, total) {
     }
 
     if (doc.kind === "Deployment") {
-        const containers = doc.spec?.template?.spec?.containers;
+        const podSpec = doc.spec?.template?.spec;
         if (!doc.spec?.selector?.matchLabels) err('falta "spec.selector.matchLabels".');
-        if (!containers || !containers.length) err('falta "spec.template.spec.containers" (ou está vazio).');
-        else containers.forEach((c, i) => { if (!c.image) err(`container #${i + 1} sem "image".`); });
+        if (!podSpec?.containers || !podSpec.containers.length) err('falta "spec.template.spec.containers" (ou está vazio).');
+
         const selectorLabels = doc.spec?.selector?.matchLabels;
         const templateLabels = doc.spec?.template?.metadata?.labels;
         if (selectorLabels && templateLabels) {
             const mismatch = Object.entries(selectorLabels).some(([k, v]) => templateLabels[k] !== v);
             if (mismatch) err('"spec.selector.matchLabels" não corresponde a "spec.template.metadata.labels" — o Deployment não vai gerir os próprios pods.');
         }
-        if (!(Number(doc.spec?.replicas) >= 1)) warn('"spec.replicas" em falta ou inválido — o Kubernetes assume 1 por defeito.');
+
+        if (doc.spec && "replicas" in doc.spec && typeof doc.spec.replicas !== "number") {
+            err(`"spec.replicas" devia ser um número, não texto (tens "${doc.spec.replicas}", devia ser ${doc.spec.replicas}).`);
+        } else if (!(Number(doc.spec?.replicas) >= 1)) {
+            warn('"spec.replicas" em falta ou inválido — o Kubernetes assume 1 por defeito.');
+        }
+
+        // um Deployment gere os pods via ReplicaSet — o restartPolicy do
+        // template TEM de ser "Always", senao a API rejeita o pedido.
+        if (podSpec?.restartPolicy && podSpec.restartPolicy !== "Always") {
+            err(`"spec.template.spec.restartPolicy" é "${podSpec.restartPolicy}", mas num Deployment só pode ser "Always" — a API vai rejeitar isto.`);
+        }
+
+        validateContainers(podSpec?.containers, err, warn);
     }
 
     if (doc.kind === "Service") {
         if (!doc.spec?.selector) warn('sem "spec.selector" — só faz sentido se for propositadamente um Service sem selector (ex.: ligado a um Endpoints manual).');
         if (!doc.spec?.ports?.length) err('falta "spec.ports" (ou está vazio).');
+        else
+            doc.spec.ports.forEach((p, i) => {
+                // "targetPort" pode legitimamente ser o nome de uma porta do
+                // container (string), por isso so se verifica "port".
+                if (p.port != null && typeof p.port !== "number") err(`porta #${i + 1}: "port" devia ser um número, não texto ("${p.port}").`);
+            });
     }
 
     return issues;
+}
+
+const VALID_IMAGE_PULL_POLICIES = ["Always", "IfNotPresent", "Never"];
+// aceita numero puro (bytes) ou numero com sufixo de unidade valido
+// (Ki/Mi/Gi/Ti ou K/M/G/T, com ou sem o "i"), tal como o Kubernetes espera
+// para CPU/memoria.
+const K8S_QUANTITY_RE = /^\d+(\.\d+)?(m|[KMGT]i?)?$/;
+
+// verifica cada container de um pod (imagem, nome, portas, env, requests/
+// limits) — reaproveitado pelo Deployment (e no futuro por outros kinds
+// com podSpec, como DaemonSet/StatefulSet, se vierem a ser suportados).
+function validateContainers(containers, err, warn) {
+    if (!containers) return;
+    containers.forEach((c, i) => {
+        const tag = `container #${i + 1}${c?.name ? ` ("${c.name}")` : ""}`;
+        if (!c.name) err(`${tag}: sem "name".`);
+        if (!c.image) err(`${tag}: sem "image".`);
+        if (c.imagePullPolicy && !VALID_IMAGE_PULL_POLICIES.includes(c.imagePullPolicy)) {
+            err(`${tag}: "imagePullPolicy: ${c.imagePullPolicy}" não é válido — tem de ser ${VALID_IMAGE_PULL_POLICIES.join(", ")}.`);
+        }
+        (c.ports || []).forEach((p, pi) => {
+            if (p.containerPort != null && typeof p.containerPort !== "number") {
+                err(`${tag}: porta #${pi + 1} — "containerPort" devia ser um número, não texto ("${p.containerPort}").`);
+            }
+        });
+        (c.env || []).forEach((e, ei) => {
+            if (!e.name) err(`${tag}: entrada #${ei + 1} de "env" sem "name".`);
+            if (e.value !== undefined && e.valueFrom !== undefined) warn(`${tag}: entrada "${e.name || ei + 1}" de "env" tem "value" e "valueFrom" ao mesmo tempo — só um é usado.`);
+        });
+        ["requests", "limits"].forEach((kind) => {
+            const res = c.resources?.[kind];
+            if (!res) return;
+            ["cpu", "memory"].forEach((field) => {
+                const val = res[field];
+                if (val == null) return;
+                if (!K8S_QUANTITY_RE.test(String(val))) {
+                    warn(`${tag}: resources.${kind}.${field} = "${val}" não parece uma quantidade válida (ex.: "500m" para CPU, "256Mi" para memória).`);
+                }
+            });
+        });
+    });
 }
 
 function checkYamlContent(text) {
