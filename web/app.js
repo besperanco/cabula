@@ -2435,6 +2435,7 @@ const KNOWN_HEAT_RESOURCE_CHECKS = {
         if (!props?.network_id && !props?.network) err('Falta "network_id" (ou "network") nas properties.');
         const issue = numericPropIssue(props, "ip_version");
         if (issue) err(issue);
+        else if (props?.ip_version != null && ![4, 6].includes(props.ip_version)) err('"ip_version" tem de ser 4 ou 6.');
     },
     "OS::Neutron::Router": (props, err, warn) => {
         if (!props?.external_gateway_info) warn('Sem "external_gateway_info" — o router fica sem gateway externo.');
@@ -2457,7 +2458,81 @@ const KNOWN_HEAT_RESOURCE_CHECKS = {
             if (issue) err(issue);
         }
     },
+    "OS::Heat::ResourceGroup": (props, err, warn) => {
+        if (props?.count == null) warn('Falta "count" nas properties (assume 1 por defeito).');
+        else {
+            const issue = numericPropIssue(props, "count");
+            if (issue) err(issue);
+        }
+        if (!props?.resource_def) err('Falta "resource_def" nas properties.');
+        else if (!props.resource_def.type) err('"resource_def" sem "type".');
+    },
 };
+
+// para alguns pares (tipo de recurso, propriedade), sabe-se de antemao que
+// um "get_resource" ali tem de apontar para um recurso de um tipo
+// especifico — apanha o erro classico de trocar sub-rede por rede, etc.
+const HEAT_REF_TYPE_CHECKS = {
+    "OS::Neutron::Subnet": [["network_id", ["OS::Neutron::Net"]]],
+    "OS::Neutron::RouterInterface": [
+        ["router_id", ["OS::Neutron::Router"]],
+        ["subnet", ["OS::Neutron::Subnet"]],
+    ],
+};
+function checkRefTypes(resources, key, res, err) {
+    const rules = HEAT_REF_TYPE_CHECKS[res.type];
+    if (!rules) return;
+    for (const [prop, expectedTypes] of rules) {
+        const val = res.properties?.[prop];
+        if (val && typeof val === "object" && typeof val.get_resource === "string") {
+            const target = resources[val.get_resource];
+            if (target?.type && !expectedTypes.includes(target.type)) {
+                err(`Recurso "${key}": "${prop}" aponta para "${val.get_resource}" (tipo ${target.type}), mas esperava-se ${expectedTypes.join(" ou ")}.`);
+            }
+        }
+    }
+}
+
+// grafo de dependencias entre recursos: liga cada recurso aos que referencia
+// via get_resource/get_attr (dependencia implicita) ou via "depends_on"
+// (explicita), para detetar ciclos (A depende de B que depende de A).
+function buildHeatDependencyGraph(resources) {
+    const graph = {};
+    for (const [key, res] of Object.entries(resources)) {
+        const deps = new Set([...collectIntrinsicRefs(res, "get_resource"), ...collectIntrinsicRefs(res, "get_attr")]);
+        const dependsOn = res?.depends_on;
+        if (typeof dependsOn === "string") deps.add(dependsOn);
+        else if (Array.isArray(dependsOn)) dependsOn.forEach((d) => typeof d === "string" && deps.add(d));
+        deps.delete(key);
+        graph[key] = [...deps].filter((d) => d in resources);
+    }
+    return graph;
+}
+function findHeatCycle(graph) {
+    const state = {}; // undefined=por visitar, 1=em curso, 2=feito
+    const stack = [];
+    function dfs(node) {
+        state[node] = 1;
+        stack.push(node);
+        for (const dep of graph[node] || []) {
+            if (state[dep] === 1) return [...stack.slice(stack.indexOf(dep)), dep];
+            if (state[dep] !== 2) {
+                const found = dfs(dep);
+                if (found) return found;
+            }
+        }
+        stack.pop();
+        state[node] = 2;
+        return null;
+    }
+    for (const node of Object.keys(graph)) {
+        if (state[node] !== 2) {
+            const found = dfs(node);
+            if (found) return found;
+        }
+    }
+    return null;
+}
 
 // procura recursivamente todos os "{ get_resource: X }" (ou "{ get_param: X
 // }"/"{ get_param: [X, ...] }") dentro de um valor ja interpretado pelo
@@ -2500,13 +2575,26 @@ function validateHeatDoc(doc) {
         }
         const check = KNOWN_HEAT_RESOURCE_CHECKS[res.type];
         if (check) check(res.properties, (m) => err(`Recurso "${key}" (${res.type}): ${m}`), (m) => warn(`Recurso "${key}" (${res.type}): ${m}`));
+        checkRefTypes(resources, key, res, err);
+
+        const dependsOn = res.depends_on;
+        const dependsOnList = typeof dependsOn === "string" ? [dependsOn] : Array.isArray(dependsOn) ? dependsOn : [];
+        dependsOnList
+            .filter((d) => typeof d === "string" && !(d in resources))
+            .forEach((d) => err(`Recurso "${key}": "depends_on" aponta para "${d}", que não existe.`));
     }
 
     const resourceRefs = collectIntrinsicRefs(resources, "get_resource");
     [...new Set(resourceRefs)].filter((r) => !(r in resources)).forEach((r) => err(`"get_resource: ${r}" aponta para um recurso que não existe no ficheiro.`));
 
-    // outputs tambem pode ter get_resource/get_param — inclui na verificacao,
-    // nao so os resources.
+    const attrRefs = collectIntrinsicRefs(resources, "get_attr");
+    [...new Set(attrRefs)].filter((r) => !(r in resources)).forEach((r) => err(`"get_attr: [${r}, ...]" aponta para um recurso que não existe no ficheiro.`));
+
+    const cycle = findHeatCycle(buildHeatDependencyGraph(resources));
+    if (cycle) err(`Ciclo de dependências entre recursos: ${cycle.join(" → ")}.`);
+
+    // outputs tambem pode ter get_resource/get_param/get_attr — inclui na
+    // verificacao, nao so os resources.
     const paramRefs = [...collectIntrinsicRefs(resources, "get_param"), ...collectIntrinsicRefs(doc.outputs, "get_param")];
     const paramNames = doc.parameters && typeof doc.parameters === "object" ? Object.keys(doc.parameters) : [];
     [...new Set(paramRefs)].filter((p) => !paramNames.includes(p)).forEach((p) => err(`"get_param: ${p}" aponta para um parâmetro que não está definido em "parameters".`));
@@ -2514,9 +2602,24 @@ function validateHeatDoc(doc) {
 
     const outputResourceRefs = collectIntrinsicRefs(doc.outputs, "get_resource");
     [...new Set(outputResourceRefs)].filter((r) => !(r in resources)).forEach((r) => err(`Em "outputs", "get_resource: ${r}" aponta para um recurso que não existe.`));
+    const outputAttrRefs = collectIntrinsicRefs(doc.outputs, "get_attr");
+    [...new Set(outputAttrRefs)].filter((r) => !(r in resources)).forEach((r) => err(`Em "outputs", "get_attr: [${r}, ...]" aponta para um recurso que não existe.`));
 
     return issues;
 }
+
+// apiVersion "normal" para os kinds mais comuns — so um aviso (nao erro),
+// porque clusters/versoes antigas por vezes ainda aceitam apiVersions mais
+// velhas, e nao ha forma de confirmar sem estar ligado ao cluster real.
+const K8S_KIND_API_VERSIONS = {
+    Deployment: ["apps/v1"], StatefulSet: ["apps/v1"], DaemonSet: ["apps/v1"], ReplicaSet: ["apps/v1"],
+    Service: ["v1"], Pod: ["v1"], Namespace: ["v1"], ConfigMap: ["v1"], Secret: ["v1"],
+    PersistentVolumeClaim: ["v1"], PersistentVolume: ["v1"], ServiceAccount: ["v1"], Endpoints: ["v1"],
+    Ingress: ["networking.k8s.io/v1"], NetworkPolicy: ["networking.k8s.io/v1"],
+    Job: ["batch/v1"], CronJob: ["batch/v1"],
+    Role: ["rbac.authorization.k8s.io/v1"], RoleBinding: ["rbac.authorization.k8s.io/v1"],
+    ClusterRole: ["rbac.authorization.k8s.io/v1"], ClusterRoleBinding: ["rbac.authorization.k8s.io/v1"],
+};
 
 function validateK8sDoc(doc, index, total) {
     const issues = [];
@@ -2536,16 +2639,22 @@ function validateK8sDoc(doc, index, total) {
         if (issue) err(`"metadata.name" inválido: ${issue}.`);
     }
 
-    if (doc.kind === "Deployment") {
+    const expectedApiVersions = K8S_KIND_API_VERSIONS[doc.kind];
+    if (doc.apiVersion && expectedApiVersions && !expectedApiVersions.includes(doc.apiVersion)) {
+        warn(`"apiVersion: ${doc.apiVersion}" não é o habitual para "kind: ${doc.kind}" (o normal é ${expectedApiVersions.join(" ou ")}).`);
+    }
+
+    if (doc.kind === "Deployment" || doc.kind === "StatefulSet") {
         const podSpec = doc.spec?.template?.spec;
         if (!doc.spec?.selector?.matchLabels) err('falta "spec.selector.matchLabels".');
         if (!podSpec?.containers || !podSpec.containers.length) err('falta "spec.template.spec.containers" (ou está vazio).');
+        if (doc.kind === "StatefulSet" && !doc.spec?.serviceName) err('falta "spec.serviceName" (obrigatório num StatefulSet).');
 
         const selectorLabels = doc.spec?.selector?.matchLabels;
         const templateLabels = doc.spec?.template?.metadata?.labels;
         if (selectorLabels && templateLabels) {
             const mismatch = Object.entries(selectorLabels).some(([k, v]) => templateLabels[k] !== v);
-            if (mismatch) err('"spec.selector.matchLabels" não corresponde a "spec.template.metadata.labels" — o Deployment não vai gerir os próprios pods.');
+            if (mismatch) err('"spec.selector.matchLabels" não corresponde a "spec.template.metadata.labels" — o controlador não vai gerir os próprios pods.');
         }
 
         if (doc.spec && "replicas" in doc.spec && typeof doc.spec.replicas !== "number") {
@@ -2554,10 +2663,10 @@ function validateK8sDoc(doc, index, total) {
             warn('"spec.replicas" em falta ou inválido — o Kubernetes assume 1 por defeito.');
         }
 
-        // um Deployment gere os pods via ReplicaSet — o restartPolicy do
-        // template TEM de ser "Always", senao a API rejeita o pedido.
+        // o controlador gere os pods via ReplicaSet/pods diretos — o
+        // restartPolicy do template TEM de ser "Always", senao a API rejeita.
         if (podSpec?.restartPolicy && podSpec.restartPolicy !== "Always") {
-            err(`"spec.template.spec.restartPolicy" é "${podSpec.restartPolicy}", mas num Deployment só pode ser "Always" — a API vai rejeitar isto.`);
+            err(`"spec.template.spec.restartPolicy" é "${podSpec.restartPolicy}", mas num ${doc.kind} só pode ser "Always" — a API vai rejeitar isto.`);
         }
 
         validateContainers(podSpec?.containers, err, warn);
@@ -2573,6 +2682,104 @@ function validateK8sDoc(doc, index, total) {
                 if (p.port != null && typeof p.port !== "number") err(`porta #${i + 1}: "port" devia ser um número, não texto ("${p.port}").`);
             });
     }
+
+    if (doc.kind === "NetworkPolicy") {
+        if (doc.spec?.podSelector === undefined) err('falta "spec.podSelector" (usa "podSelector: {}" para selecionar todos os pods do namespace).');
+        else if (typeof doc.spec.podSelector !== "object" || Array.isArray(doc.spec.podSelector)) {
+            err('"spec.podSelector" tem de ser um objeto (matchLabels/matchExpressions, ou {} vazio).');
+        }
+    }
+
+    if (doc.kind === "PersistentVolumeClaim") {
+        if (!doc.spec?.accessModes?.length) err('falta "spec.accessModes" (ou está vazio).');
+        if (!doc.spec?.resources?.requests?.storage) err('falta "spec.resources.requests.storage".');
+    }
+
+    return issues;
+}
+
+// devolve as labels que os pods geridos por este documento vao ter, ou null
+// se o kind nao gerar pods (usado para cruzar Service <-> workload).
+function k8sWorkloadPodLabels(doc) {
+    if (doc.kind === "Pod") return doc.metadata?.labels || null;
+    if (["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"].includes(doc.kind)) {
+        return doc.spec?.template?.metadata?.labels || null;
+    }
+    return null;
+}
+function k8sWorkloadContainers(doc) {
+    return doc.kind === "Pod" ? doc.spec?.containers || [] : doc.spec?.template?.spec?.containers || [];
+}
+function k8sWorkloadVolumes(doc) {
+    return doc.kind === "Pod" ? doc.spec?.volumes || [] : doc.spec?.template?.spec?.volumes || [];
+}
+
+// verificacoes que precisam de comparar VARIOS documentos entre si (por
+// isso nao cabem em validateK8sDoc, que so ve um documento de cada vez):
+// Service <-> pods que o selector encontra, Ingress <-> Service, e
+// Deployment/StatefulSet <-> ConfigMap/Secret que referencia.
+function validateK8sCrossDoc(docs) {
+    const issues = [];
+    const err = (message) => issues.push({ level: "error", message });
+    const warn = (message) => issues.push({ level: "warning", message });
+
+    const workloads = docs.filter((d) => k8sWorkloadPodLabels(d));
+    const configMapNames = new Set(docs.filter((d) => d.kind === "ConfigMap").map((d) => d.metadata?.name).filter(Boolean));
+    const secretNames = new Set(docs.filter((d) => d.kind === "Secret").map((d) => d.metadata?.name).filter(Boolean));
+    const serviceNames = new Set(docs.filter((d) => d.kind === "Service").map((d) => d.metadata?.name).filter(Boolean));
+
+    if (workloads.length) {
+        docs.filter((d) => d.kind === "Service" && d.spec?.selector).forEach((svc) => {
+            const sel = svc.spec.selector;
+            const matched = workloads.find((w) => {
+                const labels = k8sWorkloadPodLabels(w) || {};
+                return Object.entries(sel).every(([k, v]) => labels[k] === v);
+            });
+            if (!matched) {
+                warn(`Service "${svc.metadata?.name}": o selector não corresponde às labels de nenhum Deployment/StatefulSet/Pod deste ficheiro (pode apontar para pods definidos noutro ficheiro).`);
+            } else {
+                const containerPorts = k8sWorkloadContainers(matched).flatMap((c) => (c.ports || []).map((p) => p.containerPort));
+                (svc.spec.ports || []).forEach((p) => {
+                    if (typeof p.targetPort === "number" && containerPorts.length && !containerPorts.includes(p.targetPort)) {
+                        warn(`Service "${svc.metadata?.name}": targetPort ${p.targetPort} não corresponde a nenhuma containerPort exposta pelo workload selecionado ("${matched.metadata?.name}").`);
+                    }
+                });
+            }
+        });
+    }
+
+    docs.filter((d) => d.kind === "Ingress").forEach((ing) => {
+        (ing.spec?.rules || []).forEach((rule) => {
+            (rule.http?.paths || []).forEach((p) => {
+                const svcName = p.backend?.service?.name || p.backend?.serviceName; // v1 vs. extensions/v1beta1
+                if (svcName && !serviceNames.has(svcName)) {
+                    err(`Ingress "${ing.metadata?.name}": referencia o Service "${svcName}", que não existe neste ficheiro.`);
+                }
+            });
+        });
+    });
+
+    workloads.forEach((w) => {
+        const wname = `${w.kind} "${w.metadata?.name}"`;
+        k8sWorkloadContainers(w).forEach((c) => {
+            (c.envFrom || []).forEach((e) => {
+                if (e.configMapRef?.name && !configMapNames.has(e.configMapRef.name)) warn(`${wname}: envFrom referencia o ConfigMap "${e.configMapRef.name}", que não está neste ficheiro (pode existir no cluster).`);
+                if (e.secretRef?.name && !secretNames.has(e.secretRef.name)) warn(`${wname}: envFrom referencia o Secret "${e.secretRef.name}", que não está neste ficheiro (pode existir no cluster).`);
+            });
+            (c.env || []).forEach((e) => {
+                if (e.valueFrom?.configMapKeyRef?.name && !configMapNames.has(e.valueFrom.configMapKeyRef.name)) {
+                    warn(`${wname}: env "${e.name}" referencia o ConfigMap "${e.valueFrom.configMapKeyRef.name}", que não está neste ficheiro (pode existir no cluster).`);
+                }
+                if (e.valueFrom?.secretKeyRef?.name && !secretNames.has(e.valueFrom.secretKeyRef.name)) {
+                    warn(`${wname}: env "${e.name}" referencia o Secret "${e.valueFrom.secretKeyRef.name}", que não está neste ficheiro (pode existir no cluster).`);
+                }
+            });
+        });
+        k8sWorkloadVolumes(w).forEach((v) => {
+            if (v.configMap?.name && !configMapNames.has(v.configMap.name)) warn(`${wname}: volume "${v.name}" referencia o ConfigMap "${v.configMap.name}", que não está neste ficheiro (pode existir no cluster).`);
+            if (v.secret?.secretName && !secretNames.has(v.secret.secretName)) warn(`${wname}: volume "${v.name}" referencia o Secret "${v.secret.secretName}", que não está neste ficheiro (pode existir no cluster).`);
+        });
+    });
 
     return issues;
 }
@@ -2633,7 +2840,11 @@ function checkYamlContent(text) {
     const isK8s = docs.every((d) => d && typeof d === "object" && d.apiVersion && d.kind);
 
     if (isHeat) return { kind: "heat", docCount: 1, issues: validateHeatDoc(docs[0]) };
-    if (isK8s) return { kind: "k8s", docCount: docs.length, issues: docs.flatMap((d, i) => validateK8sDoc(d, i, docs.length)) };
+    if (isK8s) {
+        const perDoc = docs.flatMap((d, i) => validateK8sDoc(d, i, docs.length));
+        const cross = validateK8sCrossDoc(docs);
+        return { kind: "k8s", docCount: docs.length, issues: [...perDoc, ...cross] };
+    }
     return {
         kind: "unknown",
         docCount: docs.length,
