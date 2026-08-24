@@ -315,6 +315,9 @@ function renderNavTree() {
     html += navItemHtml("notes", "📝", "Notas", !state.favoritesOnly && state.tab === "notes");
     handlers.notes = () => goTo("notes");
 
+    html += navItemHtml("tablesearch", "🔎", "Pesquisa em Tabela", !state.favoritesOnly && state.tab === "tablesearch");
+    handlers.tablesearch = () => goTo("tablesearch");
+
     html += navItemHtml("subnet", "🧮", "Calc. de Subnets", !state.favoritesOnly && state.tab === "subnet");
     handlers.subnet = () => goTo("subnet");
     html += navItemHtml("favorites", "⭐", "Favoritos", state.favoritesOnly);
@@ -328,7 +331,7 @@ function renderNavTree() {
 
 $("#search").oninput = (e) => {
     state.query = e.target.value;
-    if ((state.tab === "subnet" || state.tab === "notes") && !state.favoritesOnly) return;
+    if ((state.tab === "subnet" || state.tab === "notes" || state.tab === "tablesearch") && !state.favoritesOnly) return;
     render();
 };
 
@@ -606,12 +609,18 @@ async function refreshNav() {
 async function loadAndRender() {
     renderNavTree();
     listEl.innerHTML = '<div class="empty"><div class="term-loading">❯ <span class="cursor-blink">_</span></div></div>';
-    $(".content").classList.toggle("content-wide", state.tab === "notes" && !state.favoritesOnly);
+    $(".content").classList.toggle("content-wide", (state.tab === "notes" || state.tab === "tablesearch") && !state.favoritesOnly);
     const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
     const isK8sGenerator = state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL;
     const isYamlChecker = state.tab === "scenarios" && state.category === YAML_CHECKER_CATEGORY_LABEL;
     $("#add-btn").style.display =
-        state.favoritesOnly || state.tab === "subnet" || state.tab === "notes" || isHeatGenerator || isK8sGenerator || isYamlChecker
+        state.favoritesOnly ||
+        state.tab === "subnet" ||
+        state.tab === "notes" ||
+        state.tab === "tablesearch" ||
+        isHeatGenerator ||
+        isK8sGenerator ||
+        isYamlChecker
             ? "none"
             : "";
 
@@ -624,6 +633,12 @@ async function loadAndRender() {
     if (state.tab === "notes" && !state.favoritesOnly) {
         renderBreadcrumb(null);
         await renderNotes();
+        return;
+    }
+
+    if (state.tab === "tablesearch" && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        renderTableSearch();
         return;
     }
 
@@ -2032,6 +2047,117 @@ async function renderNotes() {
             await renderNotes();
         };
     }
+}
+
+// ---------------------------------------------------------------------
+// Pesquisa em Tabela: cola-se uma tabela (TSV/CSV, 1ª linha = cabeçalhos),
+// pesquisa-se a 4ª coluna por 3 dígitos isolados (ex.: "434" dentro de
+// "...-434.dominio.com", mas não dentro de "1434" ou "4340"). Nunca fica
+// guardada em lado nenhum — só na memória da página, perde-se ao recarregar.
+// ---------------------------------------------------------------------
+
+let tableSearchState = { headers: [], rows: [], query: "" };
+
+function parseTableSearchInput(raw) {
+    const lines = raw.split(/\r?\n/).filter((l) => l.trim() !== "");
+    if (!lines.length) return { headers: [], rows: [] };
+    const delim = lines[0].includes("\t") ? "\t" : lines[0].includes(";") ? ";" : ",";
+    const split = (line) => line.split(delim).map((c) => c.trim());
+    const headers = split(lines[0]);
+    const rows = lines.slice(1).map(split);
+    return { headers, rows };
+}
+
+function renderTableSearch() {
+    const hasData = tableSearchState.headers.length > 0;
+
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">🔎 Pesquisa em Tabela</div>
+                <div class="desc">
+                    Cola aqui a tua tabela (copiada do Excel/Sheets, ou CSV) — 1ª linha com os
+                    nomes das colunas. Fica só nesta página, nunca é guardada: perde-se ao
+                    recarregar ou mudar de aba.
+                </div>
+                ${
+                    hasData
+                        ? `<div style="display:flex;gap:8px;margin:16px 0 10px;align-items:center">
+                            <span class="desc" style="margin:0">${tableSearchState.rows.length} linhas carregadas, ${tableSearchState.headers.length} colunas.</span>
+                            <button class="ghost" id="table-search-clear">Limpar e colar outra tabela</button>
+                        </div>
+                        <div class="form-row" style="max-width:360px">
+                            <label>Pesquisar na coluna "${escapeHtml(tableSearchState.headers[3] || "4ª coluna")}" (3 dígitos)</label>
+                            <input id="table-search-query" placeholder="ex.: 434" maxlength="3" inputmode="numeric"
+                                value="${escapeAttr(tableSearchState.query)}">
+                        </div>
+                        <div id="table-search-results" style="margin-top:16px;overflow-x:auto"></div>`
+                        : `<div class="form-row" style="margin-top:16px">
+                            <label>Dados da tabela</label>
+                            <textarea id="table-search-input" rows="10"
+                                style="font-family:'JetBrains Mono',monospace;font-size:0.82rem"
+                                placeholder="Target_ID\tName\tPort\tDescription\tScope\tScopeID"></textarea>
+                        </div>
+                        <div class="dialog-actions" style="justify-content:flex-start;margin-top:10px">
+                            <button class="primary" id="table-search-load">Carregar tabela</button>
+                        </div>`
+                }
+            </div>
+        </div>`;
+
+    if (!hasData) {
+        $("#table-search-load").onclick = () => {
+            const raw = $("#table-search-input").value;
+            const { headers, rows } = parseTableSearchInput(raw);
+            if (headers.length < 4) {
+                toast("Preciso de pelo menos 4 colunas (a 4ª é onde vou pesquisar).", true);
+                return;
+            }
+            tableSearchState = { headers, rows, query: "" };
+            renderTableSearch();
+        };
+        return;
+    }
+
+    $("#table-search-clear").onclick = () => {
+        tableSearchState = { headers: [], rows: [], query: "" };
+        renderTableSearch();
+    };
+
+    const resultsEl = $("#table-search-results");
+    const renderResults = () => {
+        const q = tableSearchState.query.trim();
+        if (!/^\d{3}$/.test(q)) {
+            resultsEl.innerHTML = `<div class="desc">Escreve exatamente 3 dígitos para pesquisar.</div>`;
+            return;
+        }
+        const re = new RegExp(`(^|\\D)${q}(\\D|$)`);
+        const matches = tableSearchState.rows.filter((row) => re.test(row[3] || ""));
+        if (!matches.length) {
+            resultsEl.innerHTML = `<div class="desc">Sem resultados para "${escapeHtml(q)}".</div>`;
+            return;
+        }
+        resultsEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+            <thead><tr>${tableSearchState.headers
+                .map((h) => `<th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-weight:600">${escapeHtml(h)}</th>`)
+                .join("")}</tr></thead>
+            <tbody>${matches
+                .map(
+                    (row) =>
+                        `<tr>${row
+                            .map((cell, idx) => `<td style="padding:6px 10px;border-bottom:1px solid var(--border)${idx === 3 ? ";color:var(--accent)" : ""}">${escapeHtml(cell || "")}</td>`)
+                            .join("")}</tr>`
+                )
+                .join("")}</tbody>
+        </table>`;
+    };
+    renderResults();
+
+    $("#table-search-query").oninput = (e) => {
+        tableSearchState.query = e.target.value.replace(/\D/g, "").slice(0, 3);
+        e.target.value = tableSearchState.query;
+        renderResults();
+    };
 }
 
 function renderHeatGenerator() {
