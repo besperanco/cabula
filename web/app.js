@@ -791,6 +791,10 @@ const VAR_HINTS = {
     id_migracao: "ID da migração em curso. Consulta com 'openstack server migration list --server <instância>'.",
     destino_host: "Hypervisor de destino. Consulta com 'openstack hypervisor list'.",
     zona_disponibilidade: "Zona de disponibilidade (Availability Zone). Consulta com 'openstack availability zone list'.",
+    nome_snapshot: "Nome a dar à imagem (snapshot) criada a partir da instância.",
+    nome_nova_instancia: "Nome a dar à nova instância criada a partir do snapshot.",
+    nome_snapshot_volume: "Nome a dar ao snapshot do volume.",
+    nome_novo_volume: "Nome a dar ao novo volume criado a partir do snapshot.",
 };
 function varHint(name) {
     return VAR_HINTS[name] || `Substitui pelo valor real de "${prettifyVar(name).toLowerCase()}" antes de copiar o comando.`;
@@ -829,6 +833,10 @@ const VAR_PLACEHOLDERS = {
     id_migracao: "id-da-migracao",
     destino_host: "compute-02",
     zona_disponibilidade: "nova",
+    nome_snapshot: "snapshot-meu-servidor",
+    nome_nova_instancia: "meu-servidor-restaurado",
+    nome_snapshot_volume: "snapshot-meu-volume",
+    nome_novo_volume: "meu-volume-restaurado",
 };
 function varPlaceholder(name) {
     return VAR_PLACEHOLDERS[name] || prettifyVar(name).toLowerCase();
