@@ -785,6 +785,12 @@ const VAR_HINTS = {
     id_porta: "ID da porta de rede (Neutron) ligada à instância. Consulta com 'openstack port list --server <nome-da-instância>'.",
     subrede: "Sub-rede a verificar. Consulta com 'openstack subnet list'.",
     router: "Router a verificar. Consulta com 'openstack router list'.",
+    nome_volume: "Nome exato do volume Cinder. Consulta com 'openstack volume list'.",
+    projeto: "Nome ou ID do projeto (tenant) OpenStack. Consulta com 'openstack project list'.",
+    quota_valor: "Novo valor a atribuir à quota (número). Ex.: 20.",
+    id_migracao: "ID da migração em curso. Consulta com 'openstack server migration list --server <instância>'.",
+    destino_host: "Hypervisor de destino. Consulta com 'openstack hypervisor list'.",
+    zona_disponibilidade: "Zona de disponibilidade (Availability Zone). Consulta com 'openstack availability zone list'.",
 };
 function varHint(name) {
     return VAR_HINTS[name] || `Substitui pelo valor real de "${prettifyVar(name).toLowerCase()}" antes de copiar o comando.`;
@@ -806,6 +812,11 @@ const VAR_LIST_COMMAND = {
     id_porta: "openstack port list",
     subrede: "openstack subnet list",
     router: "openstack router list",
+    nome_volume: "openstack volume list",
+    projeto: "openstack project list",
+    id_migracao: "openstack server migration list",
+    destino_host: "openstack hypervisor list",
+    zona_disponibilidade: "openstack availability zone list",
 };
 // realca flags (--proto, -v, etc.) num texto ja escapado para HTML — exige
 // que a "-" venha logo a seguir a um espaco ou ao inicio, para nao apanhar
