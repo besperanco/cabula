@@ -1972,10 +1972,10 @@ async function renderNotes() {
                                     <label>Título</label>
                                     <input id="note-title" value="${escapeAttr(selected.title)}">
                                 </div>
-                                <div class="form-row">
+                                <div class="form-row" style="flex:1;min-height:0">
                                     <label>Conteúdo</label>
-                                    <textarea id="note-content" rows="16"
-                                        style="font-family:'JetBrains Mono',monospace;font-size:0.85rem">${escapeHtml(selected.content)}</textarea>
+                                    <textarea id="note-content"
+                                        style="font-family:'JetBrains Mono',monospace;font-size:0.85rem;resize:none;height:calc(100vh - 320px);min-height:260px">${escapeHtml(selected.content)}</textarea>
                                 </div>
                                 <div class="dialog-actions" style="justify-content:flex-start">
                                     <button class="primary" id="note-save">Guardar</button>
