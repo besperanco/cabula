@@ -82,10 +82,17 @@ SCENARIOS = [
             ('openstack port show "port-id"',
              "Confirma que a porta está ACTIVE e sem erros de binding — uma porta DOWN "
              "explica falta total de tráfego."),
+            ('openstack port show "port-id" -c security_group_ids -f value',
+             "Dá o(s) ID(s) exato(s) dos security groups aplicados a esta instância — usa "
+             "isto se houver vários grupos com o mesmo nome (o nome não é único no "
+             "OpenStack, só o ID é)."),
             ('openstack security group rule list "my-security-group"',
-             "Verifica se já existe uma regra a permitir tráfego SSH (porta 22)."),
+             "Verifica se já existe uma regra a permitir tráfego SSH (porta 22). Se der erro "
+             "\"Multiple security groups matching ... found\", usa o ID do passo anterior em "
+             "vez do nome."),
             ('openstack security group rule create --proto tcp --dst-port 22 "my-security-group"',
-             "Cria a regra, se não existir."),
+             "Cria a regra, se não existir. Mesma nota: usa o ID em vez do nome se houver "
+             "duplicados."),
             ('openstack router show "my-router"',
              "Confirma que o router está ligado à rede externa (gateway) e à sub-rede da "
              "instância — sem isto, o IP público não tem caminho de volta."),
