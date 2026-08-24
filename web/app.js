@@ -606,6 +606,7 @@ async function refreshNav() {
 async function loadAndRender() {
     renderNavTree();
     listEl.innerHTML = '<div class="empty"><div class="term-loading">❯ <span class="cursor-blink">_</span></div></div>';
+    $(".content").classList.toggle("content-wide", state.tab === "notes" && !state.favoritesOnly);
     const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
     const isK8sGenerator = state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL;
     const isYamlChecker = state.tab === "scenarios" && state.category === YAML_CHECKER_CATEGORY_LABEL;
@@ -1950,8 +1951,8 @@ async function renderNotes() {
                 <div style="margin:16px 0 10px">
                     <button class="primary" id="note-new">+ Nova nota</button>
                 </div>
-                <div style="display:flex;gap:16px;flex-wrap:wrap">
-                    <div style="flex:1;min-width:200px;max-width:280px">
+                <div style="display:flex;gap:16px">
+                    <div style="flex:0 0 240px;min-width:200px">
                         ${
                             notes.length
                                 ? notes
@@ -1965,7 +1966,7 @@ async function renderNotes() {
                                 : `<div class="desc">Ainda não tens notas.</div>`
                         }
                     </div>
-                    <div style="flex:2;min-width:280px">
+                    <div style="flex:1;min-width:280px">
                         ${
                             selected
                                 ? `<div class="form-row">
