@@ -137,6 +137,20 @@ body {
 }
 .pin-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--hover); }
 
+.login-overlay {
+    position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+    background:
+        linear-gradient(color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+        linear-gradient(90deg, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px) 0 0 / 32px 32px,
+        var(--bg);
+}
+.login-card {
+    width: min(340px, 90vw); background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
+    padding: 28px 26px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.login-card .brand { justify-content: center; margin-bottom: 18px; }
+.login-error { color: var(--negative); font-size: 0.82rem; margin-top: 4px; min-height: 1.2em; }
+
 /* ---------- Main ---------- */
 .main { flex: 1; min-width: 0; }
 .topbar {
@@ -431,7 +445,24 @@ dialog.palette-dialog {
 </style>
 </head>
 <body>
-<div class="app">
+<div class="login-overlay" id="login-overlay">
+    <div class="login-card">
+        <div class="brand"><span class="logo">📖</span><h1>Cábula</h1></div>
+        <form id="login-form">
+            <div class="form-row">
+                <label>Utilizador</label>
+                <input type="text" id="login-user" autocomplete="username" autofocus>
+            </div>
+            <div class="form-row">
+                <label>Password</label>
+                <input type="password" id="login-pass" autocomplete="current-password">
+            </div>
+            <div class="login-error" id="login-error"></div>
+            <button type="submit" class="primary" style="width:100%;margin-top:6px">Entrar</button>
+        </form>
+    </div>
+</div>
+<div class="app" id="app-root" style="display:none">
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
     <aside class="sidebar" id="sidebar">
         <div class="brand"><span class="logo">📖</span><h1>Cábula</h1></div>
@@ -444,6 +475,7 @@ dialog.palette-dialog {
             <input type="file" id="import-file" accept="application/json" hidden>
             <button class="pin-btn" id="pin-btn" style="margin-top:8px">🔒 PIN de edição</button>
             <button class="pin-btn" id="shortcuts-btn" style="margin-top:8px">⌨️ Atalhos</button>
+            <button class="pin-btn" id="logout-btn" style="margin-top:8px">🚪 Sair</button>
         </div>
     </aside>
 

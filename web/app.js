@@ -64,6 +64,51 @@ const listEl = $("#list");
 const navTree = $("#nav-tree");
 const breadcrumb = $("#breadcrumb");
 
+// ---------------------------------------------------------------------
+// Login: o site fica todo escondido sem sessao. So aceita este utilizador;
+// a "password" e' verificada pelo Supabase Auth a serio (nao e' so uma
+// verificacao na pagina) — o email interno nunca aparece na UI.
+// ---------------------------------------------------------------------
+
+const LOGIN_USERNAME = "esperanc";
+const LOGIN_EMAIL = "esperanc@cabula.local";
+
+function showLogin() {
+    $("#login-overlay").style.display = "flex";
+    $("#app-root").style.display = "none";
+}
+function hideLogin() {
+    $("#login-overlay").style.display = "none";
+    $("#app-root").style.display = "";
+}
+
+$("#login-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const user = $("#login-user").value.trim();
+    const pass = $("#login-pass").value;
+    const errEl = $("#login-error");
+    errEl.textContent = "";
+    if (user !== LOGIN_USERNAME) {
+        errEl.textContent = "Utilizador ou password incorretos.";
+        return;
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email: LOGIN_EMAIL, password: pass });
+    if (error) {
+        errEl.textContent = "Utilizador ou password incorretos.";
+        return;
+    }
+    hideLogin();
+    await boot();
+};
+
+$("#logout-btn").onclick = async () => {
+    await supabase.auth.signOut();
+};
+
+supabase.auth.onAuthStateChange((_event, session) => {
+    if (!session) showLogin();
+});
+
 // Regista que um comando foi copiado (usado para ordenar a Home pelos mais
 // usados). Best-effort: nao bloqueia a copia nem mostra erro se falhar.
 function bumpUsage(id) {
@@ -267,6 +312,9 @@ function renderNavTree() {
         html += `</ul></li>`;
     }
 
+    html += navItemHtml("notes", "📝", "Notas", !state.favoritesOnly && state.tab === "notes");
+    handlers.notes = () => goTo("notes");
+
     html += navItemHtml("subnet", "🧮", "Calc. de Subnets", !state.favoritesOnly && state.tab === "subnet");
     handlers.subnet = () => goTo("subnet");
     html += navItemHtml("favorites", "⭐", "Favoritos", state.favoritesOnly);
@@ -280,7 +328,7 @@ function renderNavTree() {
 
 $("#search").oninput = (e) => {
     state.query = e.target.value;
-    if (state.tab === "subnet" && !state.favoritesOnly) return;
+    if ((state.tab === "subnet" || state.tab === "notes") && !state.favoritesOnly) return;
     render();
 };
 
@@ -562,11 +610,19 @@ async function loadAndRender() {
     const isK8sGenerator = state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL;
     const isYamlChecker = state.tab === "scenarios" && state.category === YAML_CHECKER_CATEGORY_LABEL;
     $("#add-btn").style.display =
-        state.favoritesOnly || state.tab === "subnet" || isHeatGenerator || isK8sGenerator || isYamlChecker ? "none" : "";
+        state.favoritesOnly || state.tab === "subnet" || state.tab === "notes" || isHeatGenerator || isK8sGenerator || isYamlChecker
+            ? "none"
+            : "";
 
     if (state.tab === "subnet" && !state.favoritesOnly) {
         renderBreadcrumb(null);
         renderSubnetCalculator();
+        return;
+    }
+
+    if (state.tab === "notes" && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        await renderNotes();
         return;
     }
 
@@ -1868,6 +1924,115 @@ function heatPasteField(key, placeholder) {
     </div>`;
 }
 
+// ---------------------------------------------------------------------
+// Notas: bloco de notas pessoal, gravado na BD, protegido pelo login (a
+// tabela "notes" só é legível/editável com sessão autenticada — ver RLS
+// em migration_auth_and_notes.sql). Sem PIN aqui: o login já é a barreira.
+// ---------------------------------------------------------------------
+
+let notesSelectedId = null;
+
+async function renderNotes() {
+    const { data, error } = await supabase.from("notes").select("*").order("position").order("created_at");
+    if (error) {
+        listEl.innerHTML = `<div class="empty"><div class="empty-code">// erro ao carregar notas: ${escapeHtml(error.message)}</div></div>`;
+        return;
+    }
+    const notes = data || [];
+    if (notesSelectedId && !notes.some((n) => n.id === notesSelectedId)) notesSelectedId = null;
+    const selected = notesSelectedId ? notes.find((n) => n.id === notesSelectedId) : null;
+
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">📝 Notas</div>
+                <div class="desc">Bloco de notas pessoal, guardado na base de dados.</div>
+                <div style="margin:16px 0 10px">
+                    <button class="primary" id="note-new">+ Nova nota</button>
+                </div>
+                <div style="display:flex;gap:16px;flex-wrap:wrap">
+                    <div style="flex:1;min-width:200px;max-width:280px">
+                        ${
+                            notes.length
+                                ? notes
+                                      .map(
+                                          (n) => `<button class="nav-item ${selected && selected.id === n.id ? "active" : ""}"
+                                            data-note="${n.id}" style="width:100%;text-align:left;margin-bottom:4px">
+                                            <span>${escapeHtml(n.title || "(sem título)")}</span>
+                                        </button>`
+                                      )
+                                      .join("")
+                                : `<div class="desc">Ainda não tens notas.</div>`
+                        }
+                    </div>
+                    <div style="flex:2;min-width:280px">
+                        ${
+                            selected
+                                ? `<div class="form-row">
+                                    <label>Título</label>
+                                    <input id="note-title" value="${escapeAttr(selected.title)}">
+                                </div>
+                                <div class="form-row">
+                                    <label>Conteúdo</label>
+                                    <textarea id="note-content" rows="16"
+                                        style="font-family:'JetBrains Mono',monospace;font-size:0.85rem">${escapeHtml(selected.content)}</textarea>
+                                </div>
+                                <div class="dialog-actions" style="justify-content:flex-start">
+                                    <button class="primary" id="note-save">Guardar</button>
+                                    <button class="ghost" id="note-delete">Apagar</button>
+                                </div>`
+                                : `<div class="desc">Seleciona uma nota à esquerda, ou cria uma nova.</div>`
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+    $("#note-new").onclick = async () => {
+        const { data: created, error: err } = await supabase
+            .from("notes")
+            .insert({ title: "Nova nota", content: "", position: notes.length })
+            .select()
+            .single();
+        if (err) {
+            toast("Erro ao criar nota", true);
+            return;
+        }
+        notesSelectedId = created.id;
+        await renderNotes();
+    };
+
+    listEl.querySelectorAll("[data-note]").forEach((btn) => {
+        btn.onclick = async () => {
+            notesSelectedId = Number(btn.dataset.note);
+            await renderNotes();
+        };
+    });
+
+    if (selected) {
+        $("#note-save").onclick = async () => {
+            const title = $("#note-title").value.trim() || "(sem título)";
+            const content = $("#note-content").value;
+            const { error: err } = await supabase
+                .from("notes")
+                .update({ title, content, updated_at: new Date().toISOString() })
+                .eq("id", selected.id);
+            if (err) {
+                toast("Erro ao guardar nota", true);
+                return;
+            }
+            toast("Nota guardada");
+            await renderNotes();
+        };
+        $("#note-delete").onclick = async () => {
+            if (!confirm("Apagar esta nota?")) return;
+            await supabase.from("notes").delete().eq("id", selected.id);
+            notesSelectedId = null;
+            await renderNotes();
+        };
+    }
+}
+
 function renderHeatGenerator() {
     const s = heatGenState;
     const v = s.values;
@@ -3072,8 +3237,18 @@ function highlightSharedCard(id) {
     setTimeout(() => card.classList.remove("highlight-pulse"), 2000);
 }
 
-(async () => {
+async function boot() {
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) {
+        showLogin();
+        return;
+    }
+    hideLogin();
     await refreshNav();
     const opened = await openDeepLink();
     if (!opened) await loadAndRender();
-})();
+}
+
+boot();
