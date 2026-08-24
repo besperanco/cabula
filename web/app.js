@@ -796,6 +796,44 @@ function varHint(name) {
     return VAR_HINTS[name] || `Substitui pelo valor real de "${prettifyVar(name).toLowerCase()}" antes de copiar o comando.`;
 }
 
+// exemplos mostrados como placeholder nos campos do formulario — o nome
+// interno da variavel (ex.: "nome_volume") nao e' um exemplo legivel.
+const VAR_PLACEHOLDERS = {
+    nome_chave: "minha-chave",
+    grupo_seguranca: "meu-grupo",
+    imagem: "ubuntu",
+    flavor: "m1.small",
+    rede: "minha-rede",
+    rede_externa: "ext-net",
+    nome_servidor: "meu-servidor",
+    ip_publico: "203.0.113.10",
+    namespace: "default",
+    nome_pod: "meu-pod",
+    nome_no: "meu-no",
+    diretoria: "/var/log",
+    padrao: "*.log",
+    nome_arquivo: "backup.tar.gz",
+    pasta: "/pasta",
+    caminho_a_apagar: "/tmp/teste",
+    utilizador: "ubuntu",
+    host: "203.0.113.10",
+    dominio: "exemplo.com",
+    porta: "443",
+    servico: "nginx",
+    id_porta: "id-da-porta",
+    subrede: "minha-subrede",
+    router: "meu-router",
+    nome_volume: "meu-volume",
+    projeto: "meu-projeto",
+    quota_valor: "20",
+    id_migracao: "id-da-migracao",
+    destino_host: "compute-02",
+    zona_disponibilidade: "nova",
+};
+function varPlaceholder(name) {
+    return VAR_PLACEHOLDERS[name] || prettifyVar(name).toLowerCase();
+}
+
 // so estas variaveis correspondem a um comando de listagem real (com uma
 // tabela de onde se consegue tirar valores) — as outras sao "inventadas"
 // pelo utilizador (nomes novos, caminhos, etc.) e nao tem output nenhum
@@ -1055,7 +1093,7 @@ function renderCard(item) {
                             </select>
                             <button class="tpl-control-btn" data-clear-options data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Voltar a texto livre">✕</button>`
                           : `<input class="tpl-input" data-scenario="${item.id}" data-var="${escapeAttr(v)}"
-                               placeholder="${escapeAttr(v)}" value="${escapeAttr(values[v] || "")}">
+                               placeholder="${escapeAttr(varPlaceholder(v))}" value="${escapeAttr(values[v] || "")}">
                             ${
                                 VAR_LIST_COMMAND[v]
                                     ? `<button class="tpl-control-btn" data-paste-var data-scenario="${item.id}" data-var="${escapeAttr(v)}" title="Colar output e criar lista">📥</button>`
