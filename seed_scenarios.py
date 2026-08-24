@@ -68,14 +68,31 @@ SCENARIOS = [
         "uma instância recém-criada.",
         "OpenStack",
         [
-            ('openstack server show "my-server"', "Confirma o estado da instância e o IP atribuído."),
+            ('openstack server show "my-server"',
+             "Confirma que a instância está ACTIVE (não em ERROR/BUILD) e vê qual par de "
+             "chaves foi injetado no arranque."),
+            ('openstack console log show "my-server"',
+             "Verifica o arranque e o cloud-init: confirma se a chave SSH foi injetada sem "
+             "erros e se o serviço sshd chegou a arrancar."),
             ("openstack floating ip list", "Confirma se a instância tem mesmo um IP público associado."),
+            ('openstack server add floating ip "my-server" "203.0.113.10"',
+             "Associa um IP público, se ainda não tiver nenhum."),
+            ('openstack port list --server "my-server"',
+             "Confirma o ID da porta de rede (Neutron) ligada à instância."),
+            ('openstack port show "port-id"',
+             "Confirma que a porta está ACTIVE e sem erros de binding — uma porta DOWN "
+             "explica falta total de tráfego."),
+            ('openstack security group rule list "my-security-group"',
+             "Verifica se já existe uma regra a permitir tráfego SSH (porta 22)."),
             ('openstack security group rule create --proto tcp --dst-port 22 "my-security-group"',
-             "Confirma/cria a regra que permite tráfego SSH no grupo de segurança da instância."),
+             "Cria a regra, se não existir."),
+            ('openstack router show "my-router"',
+             "Confirma que o router está ligado à rede externa (gateway) e à sub-rede da "
+             "instância — sem isto, o IP público não tem caminho de volta."),
             ('ping -c 4 "203.0.113.10"', "Testa conectividade básica ao IP."),
-            ('ssh "utilizador@host"',
-             "Se o ping funcionar mas o SSH falhar, o problema é normalmente a regra de "
-             "segurança ou a chave usada."),
+            ('ssh -v "utilizador@host"',
+             "Se o ping funcionar mas o SSH falhar, o modo verbose (-v) ajuda a distinguir "
+             "entre problema de rede, chave errada, ou utilizador errado para a imagem usada."),
         ],
     ),
     (
