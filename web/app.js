@@ -2061,8 +2061,16 @@ let tableSearchState = { headers: [], rows: [], query: "" };
 function parseTableSearchInput(raw) {
     const lines = raw.split(/\r?\n/).filter((l) => l.trim() !== "");
     if (!lines.length) return { headers: [], rows: [] };
-    const delim = lines[0].includes("\t") ? "\t" : lines[0].includes(";") ? ";" : ",";
-    const split = (line) => line.split(delim).map((c) => c.trim());
+    // sem separador real (tab/;/,), so espacos a alinhar colunas — 2+ espacos
+    // seguidos e' que separa colunas (um so espaco pode fazer parte do valor,
+    // ex.: num nome com espaco dentro).
+    const split = lines[0].includes("\t")
+        ? (line) => line.split("\t").map((c) => c.trim())
+        : lines[0].includes(";")
+        ? (line) => line.split(";").map((c) => c.trim())
+        : lines[0].includes(",")
+        ? (line) => line.split(",").map((c) => c.trim())
+        : (line) => line.trim().split(/ {2,}/).map((c) => c.trim());
     const headers = split(lines[0]);
     const rows = lines.slice(1).map(split);
     return { headers, rows };
@@ -2076,9 +2084,10 @@ function renderTableSearch() {
             <div class="entry-body" style="width:100%">
                 <div class="entry-title">🔎 Pesquisa em Tabela</div>
                 <div class="desc">
-                    Cola aqui a tua tabela (copiada do Excel/Sheets, ou CSV) — 1ª linha com os
-                    nomes das colunas. Fica só nesta página, nunca é guardada: perde-se ao
-                    recarregar ou mudar de aba.
+                    Cola aqui a tua tabela — 1ª linha com os nomes das colunas. Aceita CSV,
+                    separado por tabs/";" ou só por espaços a alinhar (2 ou mais espaços
+                    seguidos marcam a fronteira entre colunas). Fica só nesta página, nunca
+                    é guardada: perde-se ao recarregar ou mudar de aba.
                 </div>
                 ${
                     hasData
@@ -2096,7 +2105,7 @@ function renderTableSearch() {
                             <label>Dados da tabela</label>
                             <textarea id="table-search-input" rows="10"
                                 style="font-family:'JetBrains Mono',monospace;font-size:0.82rem"
-                                placeholder="Target_ID\tName\tPort\tDescription\tScope\tScopeID"></textarea>
+                                placeholder="Target_ID   Name   Port   Description   Scope   ScopeID"></textarea>
                         </div>
                         <div class="dialog-actions" style="justify-content:flex-start;margin-top:10px">
                             <button class="primary" id="table-search-load">Carregar tabela</button>
