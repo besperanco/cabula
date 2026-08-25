@@ -76,10 +76,17 @@ const LOGIN_EMAIL = "esperanc@cabula.local";
 function showLogin() {
     $("#login-overlay").style.display = "flex";
     $("#app-root").style.display = "none";
+    $("#login-user").disabled = false;
+    $("#login-pass").disabled = false;
 }
 function hideLogin() {
     $("#login-overlay").style.display = "none";
     $("#app-root").style.display = "";
+    // campos desativados deixam de contar para a logica de autofill/password
+    // manager do browser (ex.: Opera GX a sugerir o username guardado no
+    // campo de pesquisa) — nao basta escondê-los com display:none.
+    $("#login-user").disabled = true;
+    $("#login-pass").disabled = true;
 }
 
 $("#login-form").onsubmit = async (e) => {
