@@ -338,6 +338,13 @@ $("#search").oninput = (e) => {
     render();
 };
 
+// alguns browsers (ex.: Opera GX/Chromium) ignoram autocomplete="off" e voltam
+// a preencher este campo com um valor guardado do autofill; força-se vazio a
+// seguir ao load para anular isso, sem depender so do atributo HTML.
+window.addEventListener("load", () => {
+    if ($("#search").value && !state.query) $("#search").value = "";
+});
+
 $("#add-btn").onclick = () => {
     if (!requirePin()) return;
     openItemDialog(null);
