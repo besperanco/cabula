@@ -2288,13 +2288,20 @@ function renderRelationsGroup(g) {
         [...values]
             .map((v) => `<span class="tag-chip ${cls}" data-copy-chip="${escapeAttr(v)}" title="Clicar para copiar">${escapeHtml(v)}</span>`)
             .join(" ");
+    const row = (label, values, cls) =>
+        values.size
+            ? `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+                <span class="desc" style="margin:0;min-width:64px;flex-shrink:0">${label}</span>
+                ${chips(values, cls)}
+            </div>`
+            : "";
     return `
         <div class="entry" style="flex-direction:column;align-items:flex-start;gap:8px">
             <div class="entry-title">🔗 ${escapeHtml(title)}</div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px">
-                ${g.names.size ? chips(g.names, "tpl-filled") : ""}
-                ${g.ips.size ? chips(g.ips, "tpl-flag") : ""}
-                ${g.uuids.size ? chips(g.uuids, "tpl-empty") : ""}
+            <div style="display:flex;flex-direction:column;gap:6px;width:100%">
+                ${row("Nomes", g.names, "tpl-filled")}
+                ${row("IPs", g.ips, "tpl-flag")}
+                ${row("UUIDs", g.uuids, "tpl-empty")}
             </div>
             <details style="width:100%">
                 <summary class="desc" style="cursor:pointer">${g.lines.length} ${g.lines.length === 1 ? "linha usada" : "linhas usadas"}</summary>
