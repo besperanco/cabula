@@ -138,7 +138,8 @@ function requirePin() {
 
 $("#pin-btn").onclick = () => $("#pin-dialog").showModal();
 $("#pin-cancel").onclick = () => $("#pin-dialog").close();
-$("#pin-save").onclick = () => {
+$("#pin-form").onsubmit = (e) => {
+    e.preventDefault();
     const val = $("#pin-input").value.trim();
     if (!val) return;
     state.pin = val;

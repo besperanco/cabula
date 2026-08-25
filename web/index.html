@@ -506,14 +506,16 @@ dialog.palette-dialog {
 
 <dialog id="pin-dialog">
     <h3>PIN de edição</h3>
-    <div class="form-row">
-        <label>PIN</label>
-        <input type="password" id="pin-input">
-    </div>
-    <div class="dialog-actions">
-        <button class="ghost" id="pin-cancel">Cancelar</button>
-        <button class="primary" id="pin-save">Guardar</button>
-    </div>
+    <form id="pin-form">
+        <div class="form-row">
+            <label>PIN</label>
+            <input type="password" id="pin-input" autocomplete="off">
+        </div>
+        <div class="dialog-actions">
+            <button type="button" class="ghost" id="pin-cancel">Cancelar</button>
+            <button type="submit" class="primary" id="pin-save">Guardar</button>
+        </div>
+    </form>
 </dialog>
 
 <dialog id="item-dialog"></dialog>
