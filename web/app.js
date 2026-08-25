@@ -318,6 +318,9 @@ function renderNavTree() {
     html += navItemHtml("tablesearch", "🔎", "Pesquisa em Tabela", !state.favoritesOnly && state.tab === "tablesearch");
     handlers.tablesearch = () => goTo("tablesearch");
 
+    html += navItemHtml("relations", "🕸️", "Relações", !state.favoritesOnly && state.tab === "relations");
+    handlers.relations = () => goTo("relations");
+
     html += navItemHtml("subnet", "🧮", "Calc. de Subnets", !state.favoritesOnly && state.tab === "subnet");
     handlers.subnet = () => goTo("subnet");
     html += navItemHtml("favorites", "⭐", "Favoritos", state.favoritesOnly);
@@ -331,7 +334,7 @@ function renderNavTree() {
 
 $("#search").oninput = (e) => {
     state.query = e.target.value;
-    if ((state.tab === "subnet" || state.tab === "notes" || state.tab === "tablesearch") && !state.favoritesOnly) return;
+    if ((state.tab === "subnet" || state.tab === "notes" || state.tab === "tablesearch" || state.tab === "relations") && !state.favoritesOnly) return;
     render();
 };
 
@@ -609,7 +612,7 @@ async function refreshNav() {
 async function loadAndRender() {
     renderNavTree();
     listEl.innerHTML = '<div class="empty"><div class="term-loading">❯ <span class="cursor-blink">_</span></div></div>';
-    $(".content").classList.toggle("content-wide", (state.tab === "notes" || state.tab === "tablesearch") && !state.favoritesOnly);
+    $(".content").classList.toggle("content-wide", (state.tab === "notes" || state.tab === "tablesearch" || state.tab === "relations") && !state.favoritesOnly);
     const isHeatGenerator = state.tab === "scenarios" && state.category === HEAT_GENERATOR_CATEGORY_LABEL;
     const isK8sGenerator = state.tab === "scenarios" && state.category === K8S_GENERATOR_CATEGORY_LABEL;
     const isYamlChecker = state.tab === "scenarios" && state.category === YAML_CHECKER_CATEGORY_LABEL;
@@ -618,6 +621,7 @@ async function loadAndRender() {
         state.tab === "subnet" ||
         state.tab === "notes" ||
         state.tab === "tablesearch" ||
+        state.tab === "relations" ||
         isHeatGenerator ||
         isK8sGenerator ||
         isYamlChecker
@@ -633,6 +637,12 @@ async function loadAndRender() {
     if (state.tab === "notes" && !state.favoritesOnly) {
         renderBreadcrumb(null);
         await renderNotes();
+        return;
+    }
+
+    if (state.tab === "relations" && !state.favoritesOnly) {
+        renderBreadcrumb(null);
+        renderRelations();
         return;
     }
 
@@ -2167,6 +2177,195 @@ function renderTableSearch() {
         e.target.value = tableSearchState.query;
         renderResults();
     };
+}
+
+// ---------------------------------------------------------------------
+// Relacoes: cola-se texto solto (comandos + outputs + notas manuais tipo
+// "fdn-instance-1 port <uuid>") e agrupa-se tudo o que aparece na mesma
+// linha (nomes, UUIDs, IPs) por uniao-e-procura, para dar uma vista rapida
+// de "o que esta ligado a que" sem ter de seguir os IDs a mao. Nunca fica
+// guardado em lado nenhum — so na memoria da pagina, tal como a Pesquisa em
+// Tabela.
+// ---------------------------------------------------------------------
+
+let relationsState = { raw: "", groups: null };
+
+const RELATIONS_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const RELATIONS_IP_RE = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
+// "nomes": palavras com hifen e pelo menos um digito (ex.: fdn-instance-1),
+// para apanhar identificadores sem apanhar palavras normais de comandos.
+const RELATIONS_NAME_RE = /\b[a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)+\b/g;
+const RELATIONS_UUID_EXACT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function relationsExtractTokens(line) {
+    const tokens = [];
+    (line.match(RELATIONS_UUID_RE) || []).forEach((t) => tokens.push({ type: "uuid", value: t.toLowerCase() }));
+    (line.match(RELATIONS_IP_RE) || []).forEach((t) => tokens.push({ type: "ip", value: t }));
+    (line.match(RELATIONS_NAME_RE) || [])
+        // exclui o proprio UUID e fragmentos dele (so hex+hifens = pedaco de UUID, nao um nome real)
+        .filter((t) => /\d/.test(t) && !RELATIONS_UUID_EXACT_RE.test(t) && !/^[0-9a-f-]+$/i.test(t))
+        .forEach((t) => tokens.push({ type: "name", value: t }));
+    // tira duplicados (mesmo tipo+valor) mantendo so um
+    const seen = new Set();
+    return tokens.filter((t) => {
+        const key = `${t.type}:${t.value}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function parseRelations(raw) {
+    const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const parent = new Map();
+    const find = (k) => {
+        while (parent.get(k) !== k) {
+            parent.set(k, parent.get(parent.get(k)));
+            k = parent.get(k);
+        }
+        return k;
+    };
+    const union = (a, b) => {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra !== rb) parent.set(ra, rb);
+    };
+
+    const lineTokens = [];
+    lines.forEach((line) => {
+        // ignora linhas que sao o proprio comando (ruido, nao relacao)
+        if (/^(\$\s*)?(openstack|kubectl)\b/i.test(line)) return;
+        const tokens = relationsExtractTokens(line);
+        if (!tokens.length) return;
+        tokens.forEach((t) => {
+            const key = `${t.type}:${t.value}`;
+            if (!parent.has(key)) parent.set(key, key);
+        });
+        for (let i = 1; i < tokens.length; i++) {
+            union(`${tokens[0].type}:${tokens[0].value}`, `${tokens[i].type}:${tokens[i].value}`);
+        }
+        lineTokens.push({ line, keys: tokens.map((t) => `${t.type}:${t.value}`) });
+    });
+
+    const groupsByRoot = new Map();
+    parent.forEach((_v, key) => {
+        const root = find(key);
+        if (!groupsByRoot.has(root)) groupsByRoot.set(root, { names: new Set(), uuids: new Set(), ips: new Set(), lines: [] });
+        const [type, ...rest] = key.split(":");
+        const value = rest.join(":");
+        const g = groupsByRoot.get(root);
+        if (type === "name") g.names.add(value);
+        if (type === "uuid") g.uuids.add(value);
+        if (type === "ip") g.ips.add(value);
+    });
+    lineTokens.forEach(({ line, keys }) => {
+        const root = find(keys[0]);
+        const g = groupsByRoot.get(root);
+        if (g && !g.lines.includes(line)) g.lines.push(line);
+    });
+
+    const groups = [...groupsByRoot.values()];
+    // grupos com nome legivel primeiro, depois por numero de membros (mais ligados = mais relevante)
+    groups.sort((a, b) => {
+        if (a.names.size !== b.names.size) return b.names.size - a.names.size;
+        const sizeA = a.names.size + a.uuids.size + a.ips.size;
+        const sizeB = b.names.size + b.uuids.size + b.ips.size;
+        return sizeB - sizeA;
+    });
+    return groups;
+}
+
+function relationsGroupTitle(g) {
+    if (g.names.size) return [...g.names][0];
+    if (g.ips.size) return [...g.ips][0];
+    if (g.uuids.size) return [...g.uuids][0];
+    return "?";
+}
+
+function renderRelationsGroup(g) {
+    const title = relationsGroupTitle(g);
+    const chips = (values, cls) =>
+        [...values]
+            .map((v) => `<span class="tag-chip ${cls}" data-copy-chip="${escapeAttr(v)}" title="Clicar para copiar">${escapeHtml(v)}</span>`)
+            .join(" ");
+    return `
+        <div class="entry" style="flex-direction:column;align-items:flex-start;gap:8px">
+            <div class="entry-title">🔗 ${escapeHtml(title)}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${g.names.size ? chips(g.names, "tpl-filled") : ""}
+                ${g.ips.size ? chips(g.ips, "tpl-flag") : ""}
+                ${g.uuids.size ? chips(g.uuids, "tpl-empty") : ""}
+            </div>
+            <details style="width:100%">
+                <summary class="desc" style="cursor:pointer">${g.lines.length} ${g.lines.length === 1 ? "linha usada" : "linhas usadas"}</summary>
+                <pre style="white-space:pre-wrap;font-size:0.8rem;margin-top:8px;color:var(--text-dim)">${g.lines.map(escapeHtml).join("\n")}</pre>
+            </details>
+        </div>`;
+}
+
+function renderRelations() {
+    const hasData = !!relationsState.groups;
+
+    listEl.innerHTML = `
+        <div class="entry">
+            <div class="entry-body" style="width:100%">
+                <div class="entry-title">🕸️ Relações</div>
+                <div class="desc">
+                    Cola aqui comandos, outputs e notas soltas (ex.: "fdn-instance-1 port &lt;uuid&gt;").
+                    Tudo o que aparecer na mesma linha é agrupado como relacionado — assim vês de
+                    imediato que instância, porta, IP e grupo de segurança andam juntos, sem teres de
+                    seguir os IDs à mão. Linhas que são o próprio comando ("openstack ...", "kubectl ...")
+                    são ignoradas. Fica só nesta página, nunca é guardado: perde-se ao recarregar ou
+                    mudar de aba.
+                </div>
+                ${
+                    hasData
+                        ? `<div style="display:flex;gap:8px;margin:16px 0 10px;align-items:center">
+                            <span class="desc" style="margin:0">${relationsState.groups.length} grupo(s) encontrados.</span>
+                            <button class="ghost" id="relations-clear">Limpar e colar outro texto</button>
+                        </div>
+                        <div id="relations-results" style="display:flex;flex-direction:column;gap:10px"></div>`
+                        : `<div class="form-row" style="margin-top:16px">
+                            <label>Texto a analisar</label>
+                            <textarea id="relations-input" rows="14"
+                                style="font-family:'JetBrains Mono',monospace;font-size:0.82rem"
+                                placeholder="fdn-instance-1 port b373e4d8-4e3f-48cf-b5c2-2e6dd8c3dc31&#10;fdn-instance-1 4d0abd7a-d885-4a45-afb8-4dce9d0bf459 | 10.129.184.24 | 192.168.3.10"></textarea>
+                        </div>
+                        <div class="dialog-actions" style="justify-content:flex-start;margin-top:10px">
+                            <button class="primary" id="relations-load">Analisar relações</button>
+                        </div>`
+                }
+            </div>
+        </div>`;
+
+    if (!hasData) {
+        $("#relations-load").onclick = () => {
+            const raw = $("#relations-input").value;
+            const groups = parseRelations(raw);
+            if (!groups.length) {
+                toast("Não encontrei nenhum UUID, IP ou identificador (nome-com-hifen-e-numero) nesse texto.", true);
+                return;
+            }
+            relationsState = { raw, groups };
+            renderRelations();
+        };
+        return;
+    }
+
+    $("#relations-clear").onclick = () => {
+        relationsState = { raw: "", groups: null };
+        renderRelations();
+    };
+
+    const resultsEl = $("#relations-results");
+    resultsEl.innerHTML = relationsState.groups.map(renderRelationsGroup).join("");
+    resultsEl.querySelectorAll("[data-copy-chip]").forEach((el) => {
+        el.style.cursor = "pointer";
+        el.onclick = () => {
+            navigator.clipboard.writeText(el.dataset.copyChip);
+            toast("Copiado");
+        };
+    });
 }
 
 function renderHeatGenerator() {

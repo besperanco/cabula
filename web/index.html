@@ -334,6 +334,13 @@ select option { background: var(--card-bg); color: var(--text); }
 .tpl-empty { color: var(--warning); border-bottom: 1px dashed var(--warning); }
 .tpl-filled { color: var(--accent); font-weight: 600; }
 .tpl-flag { color: color-mix(in srgb, var(--primary) 70%, var(--text-dim)); }
+.tag-chip {
+    display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace; border: 1px solid var(--border); background: var(--hover);
+}
+.tag-chip.tpl-filled { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.tag-chip.tpl-flag { color: color-mix(in srgb, var(--primary) 70%, var(--text-dim)); border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
+.tag-chip.tpl-empty { color: var(--text-dim); }
 .actions { display: flex; gap: 2px; flex-shrink: 0; }
 .actions button {
     background: transparent; border: none; cursor: pointer; font-size: 0.95rem; color: var(--text-dim);
@@ -485,7 +492,7 @@ dialog.palette-dialog {
             <button class="menu-toggle" id="menu-toggle">☰</button>
             <div class="search-wrap">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                <input type="search" id="search" placeholder="Pesquisar...">
+                <input type="search" id="search" placeholder="Pesquisar..." autocomplete="off">
                 <kbd class="search-kbd kbd-chip">Ctrl K</kbd>
             </div>
             <button class="primary" id="add-btn">+ Novo</button>
