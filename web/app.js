@@ -2706,9 +2706,19 @@ function parseOpenstackTopology(raw) {
                 target = getOrCreate(guessType, id, fieldMap.name || id);
             }
             Object.assign(target.fields, fieldMap);
+            const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
             if (fieldMap.security_group_ids) {
-                [...fieldMap.security_group_ids.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi)]
-                    .forEach((m) => link(target, getOrCreate("securitygroup", m[0])));
+                [...fieldMap.security_group_ids.matchAll(UUID_RE)].forEach((m) => link(target, getOrCreate("securitygroup", m[0])));
+            }
+            if (fieldMap.binding_host_id) link(target, getOrCreate("hypervisor", fieldMap.binding_host_id, fieldMap.binding_host_id));
+            if (fieldMap.network_id) link(target, getOrCreate("network", fieldMap.network_id));
+            if (fieldMap.fixed_ips) {
+                [...fieldMap.fixed_ips.matchAll(/subnet_id='([^']+)'/g)].forEach((m) => link(target, getOrCreate("subnet", m[1])));
+            }
+            // device_owner tipo "compute:<az>" indica que "device_id" e' o
+            // servidor (VM) dono desta porta — liga mesmo sem "port list --server".
+            if (fieldMap.device_id && /^compute:/.test(fieldMap.device_owner || "")) {
+                link(target, getOrCreate("vm", fieldMap.device_id));
             }
         }
     });
