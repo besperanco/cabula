@@ -2819,7 +2819,7 @@ const REL_STATUS_BAD = new Set(["error", "down", "shutoff", "stopped", "disabled
 // restantes ficam sem cor. Valores "neutros" (ex.: Task State "None")
 // tambem ficam sem cor — so' verde/vermelho para bom/mau claro.
 function relStatusClass(fieldName, value) {
-    if (!/status|state/i.test(fieldName)) return "";
+    if (!/status|state|^dhcp$/i.test(fieldName)) return "";
     const v = (value || "").trim().toLowerCase();
     if (REL_STATUS_GOOD.has(v)) return "rel-status-good";
     if (REL_STATUS_BAD.has(v)) return "rel-status-bad";
