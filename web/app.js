@@ -2203,7 +2203,7 @@ function renderTableSearch() {
 // Tabela.
 // ---------------------------------------------------------------------
 
-let relationsState = { raw: "", groups: null };
+let relationsState = { raw: "", groups: null, mode: "grupos", topology: null };
 
 const RELATIONS_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const RELATIONS_IP_RE = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
@@ -2342,11 +2342,16 @@ function renderRelations() {
                 </div>
                 ${
                     hasData
-                        ? `<div style="display:flex;gap:8px;margin:16px 0 10px;align-items:center">
+                        ? `<div style="display:flex;gap:8px;margin:16px 0 10px;align-items:center;flex-wrap:wrap">
                             <span class="desc" style="margin:0">${relationsState.groups.length} grupo(s) encontrados.</span>
+                            <button class="ghost" id="relations-mode-toggle">${relationsState.mode === "diagrama" ? "Ver como grupos" : "Ver como diagrama"}</button>
                             <button class="ghost" id="relations-clear">Limpar e colar outro texto</button>
                         </div>
-                        <div id="relations-results" style="display:flex;flex-direction:column;gap:10px"></div>`
+                        ${
+                            relationsState.mode === "diagrama"
+                                ? `<div id="relations-diagram"></div>`
+                                : `<div id="relations-results" style="display:flex;flex-direction:column;gap:10px"></div>`
+                        }`
                         : `<div class="form-row" style="margin-top:16px">
                             <label>Texto a analisar</label>
                             <textarea id="relations-input" rows="14"
@@ -2368,16 +2373,27 @@ function renderRelations() {
                 toast("Não encontrei nenhum UUID, IP ou identificador (nome-com-hifen-e-numero) nesse texto.", true);
                 return;
             }
-            relationsState = { raw, groups };
+            relationsState = { raw, groups, mode: "grupos", topology: null };
             renderRelations();
         };
         return;
     }
 
     $("#relations-clear").onclick = () => {
-        relationsState = { raw: "", groups: null };
+        relationsState = { raw: "", groups: null, mode: "grupos", topology: null };
         renderRelations();
     };
+
+    $("#relations-mode-toggle").onclick = () => {
+        relationsState.mode = relationsState.mode === "diagrama" ? "grupos" : "diagrama";
+        renderRelations();
+    };
+
+    if (relationsState.mode === "diagrama") {
+        if (!relationsState.topology) relationsState.topology = parseOpenstackTopology(relationsState.raw);
+        renderRelationsDiagram(relationsState.topology);
+        return;
+    }
 
     const resultsEl = $("#relations-results");
     resultsEl.innerHTML = relationsState.groups.map(renderRelationsGroup).join("");
@@ -2388,6 +2404,297 @@ function renderRelations() {
             toast("Copiado");
         };
     });
+}
+
+// -----------------------------------------------------------------
+// Diagrama de topologia: reconhece tabelas reais do `openstack ... list`
+// (formato "+---+---+" com cabecalho) pelas colunas que trazem — nao
+// precisa da linha do comando para saber do que se trata — e liga VM,
+// porta, rede, sub-rede, hypervisor e floating IP pelos IDs/nomes que
+// partilham entre tabelas.
+// -----------------------------------------------------------------
+
+function relSplitPipeRow(line) {
+    return line.split("|").map((c) => c.trim()).filter((c, i, arr) => !((i === 0 || i === arr.length - 1) && c === ""));
+}
+
+function relFindPipeTables(raw) {
+    const lines = raw.split(/\r?\n/);
+    const isBorder = (l) => /^\+[-+]+\+$/.test((l || "").trim());
+    const tables = [];
+    let i = 0;
+    while (i < lines.length) {
+        if (isBorder(lines[i]) && lines[i + 1] && isBorder(lines[i + 2])) {
+            const headers = relSplitPipeRow(lines[i + 1]);
+            let j = i + 3;
+            const dataRows = [];
+            while (j < lines.length && !isBorder(lines[j])) {
+                if (lines[j].trim()) dataRows.push(relSplitPipeRow(lines[j]));
+                j++;
+            }
+            let ctx = i - 1;
+            while (ctx >= 0 && !lines[ctx].trim()) ctx--;
+            tables.push({ headers, rows: dataRows, contextBefore: ctx >= 0 ? lines[ctx].trim() : "" });
+            i = j + 1;
+        } else {
+            i++;
+        }
+    }
+    return tables;
+}
+
+function parseOpenstackTopology(raw) {
+    const nodes = new Map();
+    const edges = new Set();
+    const networkByName = new Map();
+    const vmByName = new Map();
+
+    const getOrCreate = (type, id, label) => {
+        const key = `${type}:${id}`;
+        if (!nodes.has(key)) nodes.set(key, { key, id, type, label: label || id, fields: {} });
+        else if (label) nodes.get(key).label = label;
+        return nodes.get(key);
+    };
+    const link = (a, b) => {
+        if (a && b && a.key !== b.key) edges.add([a.key, b.key].sort().join("|"));
+    };
+    const colIdx = (headers, name) => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+    const hasCol = (headers, name) => colIdx(headers, name) !== -1;
+    const fieldsFromRow = (headers, row) => {
+        const f = {};
+        headers.forEach((h, idx) => { if (row[idx]) f[h] = row[idx]; });
+        return f;
+    };
+
+    const classify = (headers) => {
+        if (hasCol(headers, "Floating IP Address")) return "floatingip";
+        if (hasCol(headers, "Fixed IP Addresses") || hasCol(headers, "MAC Address")) return "port";
+        if (hasCol(headers, "Hypervisor Hostname")) return "hypervisor";
+        if (hasCol(headers, "Network") && hasCol(headers, "Subnet") && !hasCol(headers, "Subnets")) return "subnet";
+        if (hasCol(headers, "Subnets")) return "network";
+        if (hasCol(headers, "Description") && hasCol(headers, "Project") && !hasCol(headers, "Networks")) return "securitygroup";
+        if (hasCol(headers, "Networks") && hasCol(headers, "Status")) return "vm";
+        return null;
+    };
+    // processa por prioridade (rede/sub-rede/hypervisor primeiro, VM por
+    // ultimo) em vez da ordem em que as tabelas aparecem no texto colado —
+    // assim uma rede so' referenciada pelo nome (na tabela de VMs) encontra
+    // sempre o no ja criado pelo "network list" (por ID), em vez de criar
+    // um no duplicado.
+    const KIND_PRIORITY = ["network", "subnet", "hypervisor", "floatingip", "securitygroup", "port", "vm"];
+    const tables = relFindPipeTables(raw).map((t) => ({ ...t, kind: classify(t.headers) }));
+    tables.sort((a, b) => KIND_PRIORITY.indexOf(a.kind) - KIND_PRIORITY.indexOf(b.kind));
+
+    tables.forEach(({ headers, rows, contextBefore, kind }) => {
+        if (kind === "floatingip") {
+            const idIdx = colIdx(headers, "ID");
+            const fipIdx = colIdx(headers, "Floating IP Address");
+            const portIdx = colIdx(headers, "Port");
+            rows.forEach((row) => {
+                const id = row[idIdx] || row[fipIdx];
+                const fip = getOrCreate("floatingip", id, row[fipIdx] || id);
+                fip.fields = fieldsFromRow(headers, row);
+                if (portIdx !== -1 && row[portIdx]) link(fip, getOrCreate("port", row[portIdx], row[portIdx]));
+            });
+        } else if (kind === "port") {
+            const idIdx = colIdx(headers, "ID");
+            const nameIdx = colIdx(headers, "Name");
+            const fixedIdx = colIdx(headers, "Fixed IP Addresses");
+            const ownerMatch = /--server[= ]+"?([^"\s]+)/.exec(contextBefore || "");
+            const owner = ownerMatch ? ownerMatch[1] : null;
+            rows.forEach((row) => {
+                const id = row[idIdx];
+                if (!id) return;
+                const port = getOrCreate("port", id, row[nameIdx] || id);
+                port.fields = fieldsFromRow(headers, row);
+                if (owner) {
+                    const vm = vmByName.get(owner) || getOrCreate("vm", `name:${owner}`, owner);
+                    vmByName.set(owner, vm);
+                    link(vm, port);
+                }
+                if (fixedIdx !== -1 && row[fixedIdx]) {
+                    [...row[fixedIdx].matchAll(/subnet_id='([^']+)'/g)].forEach((m) => link(port, getOrCreate("subnet", m[1], m[1])));
+                }
+            });
+        } else if (kind === "hypervisor") {
+            const idIdx = colIdx(headers, "ID");
+            const hostIdx = colIdx(headers, "Hypervisor Hostname");
+            rows.forEach((row) => {
+                const id = row[hostIdx] || row[idIdx];
+                if (!id) return;
+                const hv = getOrCreate("hypervisor", id, id);
+                hv.fields = fieldsFromRow(headers, row);
+            });
+        } else if (kind === "subnet") {
+            const idIdx = colIdx(headers, "ID");
+            const nameIdx = colIdx(headers, "Name");
+            const netIdx = colIdx(headers, "Network");
+            rows.forEach((row) => {
+                const id = row[idIdx];
+                if (!id) return;
+                const subnet = getOrCreate("subnet", id, row[nameIdx] || id);
+                subnet.fields = fieldsFromRow(headers, row);
+                if (netIdx !== -1 && row[netIdx]) link(subnet, getOrCreate("network", row[netIdx], row[netIdx]));
+            });
+        } else if (kind === "network") {
+            const idIdx = colIdx(headers, "ID");
+            const nameIdx = colIdx(headers, "Name");
+            const subnetsIdx = colIdx(headers, "Subnets");
+            rows.forEach((row) => {
+                const id = row[idIdx];
+                if (!id) return;
+                const name = row[nameIdx] || id;
+                const net = getOrCreate("network", id, name);
+                net.fields = fieldsFromRow(headers, row);
+                networkByName.set(name, net);
+                if (subnetsIdx !== -1 && row[subnetsIdx]) {
+                    row[subnetsIdx].split(",").map((s) => s.trim()).filter(Boolean)
+                        .forEach((sid) => link(net, getOrCreate("subnet", sid, sid)));
+                }
+            });
+        } else if (kind === "securitygroup") {
+            const idIdx = colIdx(headers, "ID");
+            const nameIdx = colIdx(headers, "Name");
+            rows.forEach((row) => {
+                const id = row[idIdx];
+                if (!id) return;
+                const sg = getOrCreate("securitygroup", id, row[nameIdx] || id);
+                sg.fields = fieldsFromRow(headers, row);
+            });
+        } else if (kind === "vm") {
+            const idIdx = colIdx(headers, "ID");
+            const nameIdx = colIdx(headers, "Name");
+            const netIdx = colIdx(headers, "Networks");
+            const hostIdx = colIdx(headers, "Host");
+            rows.forEach((row) => {
+                const id = row[idIdx];
+                if (!id) return;
+                const label = row[nameIdx] || id;
+                const vm = vmByName.get(label) || getOrCreate("vm", id, label);
+                vmByName.set(label, vm);
+                vm.fields = fieldsFromRow(headers, row);
+                if (netIdx !== -1 && row[netIdx]) {
+                    row[netIdx].split(";").map((s) => s.trim()).filter(Boolean).forEach((part) => {
+                        const [name, ipsStr] = part.split("=");
+                        if (!name) return;
+                        const net = networkByName.get(name.trim()) || getOrCreate("network", `name:${name.trim()}`, name.trim());
+                        networkByName.set(name.trim(), net);
+                        link(vm, net);
+                        if (ipsStr) vm.fields[`IP em ${name.trim()}`] = ipsStr.trim();
+                    });
+                }
+                if (hostIdx !== -1 && row[hostIdx]) link(getOrCreate("hypervisor", row[hostIdx], row[hostIdx]), vm);
+            });
+        }
+    });
+
+    return { nodes: [...nodes.values()], edges: [...edges].map((e) => e.split("|")) };
+}
+
+const REL_LANE_ORDER = ["hypervisor", "vm", "port", "network", "subnet", "floatingip", "securitygroup"];
+const REL_LANE_LABEL = {
+    hypervisor: "Hypervisor", vm: "VM", port: "Porta", network: "Rede",
+    subnet: "Sub-rede", floatingip: "Floating IP", securitygroup: "Security Group",
+};
+const REL_LANE_ICON = {
+    hypervisor: "🖥️", vm: "💻", port: "🔌", network: "🌐", subnet: "🧩", floatingip: "🌍", securitygroup: "🛡️",
+};
+
+function renderRelationsDiagram(topology) {
+    const wrap = $("#relations-diagram");
+    if (!topology.nodes.length) {
+        wrap.innerHTML = `<div class="desc">Não encontrei nenhuma tabela "openstack ... list" reconhecível (formato "+---+---+") no texto colado.</div>`;
+        return;
+    }
+    const lanes = REL_LANE_ORDER.map((type) => ({ type, nodes: topology.nodes.filter((n) => n.type === type) })).filter((l) => l.nodes.length);
+
+    wrap.innerHTML = `
+        <div class="rel-diagram-wrap">
+            <svg class="rel-diagram-svg" id="rel-diagram-svg"></svg>
+            <div class="rel-diagram" id="rel-diagram-lanes">
+                ${lanes
+                    .map(
+                        (lane) => `<div class="rel-lane">
+                            <div class="rel-lane-title">${REL_LANE_ICON[lane.type]} ${REL_LANE_LABEL[lane.type]} (${lane.nodes.length})</div>
+                            ${lane.nodes
+                                .map(
+                                    (n) => `<div class="rel-node" data-node-key="${escapeAttr(n.key)}">
+                                        <div class="rel-node-label">${escapeHtml(n.label)}</div>
+                                        ${n.label !== n.id ? `<div class="rel-node-sub">${escapeHtml(n.id)}</div>` : ""}
+                                    </div>`
+                                )
+                                .join("")}
+                        </div>`
+                    )
+                    .join("")}
+            </div>
+        </div>`;
+
+    wrap.querySelectorAll("[data-node-key]").forEach((el) => {
+        el.onclick = () => openNodeDialog(topology.nodes.find((n) => n.key === el.dataset.nodeKey), topology);
+    });
+
+    requestAnimationFrame(() => drawRelationsDiagramLines(topology));
+}
+
+function drawRelationsDiagramLines(topology) {
+    const svg = $("#rel-diagram-svg");
+    const container = $("#relations-diagram").querySelector(".rel-diagram-wrap");
+    if (!svg || !container) return;
+    const cRect = container.getBoundingClientRect();
+    svg.setAttribute("width", container.scrollWidth);
+    svg.setAttribute("height", container.scrollHeight);
+    const boxByKey = {};
+    container.querySelectorAll("[data-node-key]").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        boxByKey[el.dataset.nodeKey] = {
+            top: r.top - cRect.top + container.scrollTop,
+            bottom: r.bottom - cRect.top + container.scrollTop,
+            left: r.left - cRect.left + container.scrollLeft,
+            right: r.right - cRect.left + container.scrollLeft,
+            midY: r.top - cRect.top + container.scrollTop + r.height / 2,
+        };
+    });
+    const paths = topology.edges
+        .map(([aKey, bKey]) => {
+            const a = boxByKey[aKey];
+            const b = boxByKey[bKey];
+            if (!a || !b) return "";
+            const [left, right] = a.left <= b.left ? [a, b] : [b, a];
+            const x1 = left.right, y1 = left.midY, x2 = right.left, y2 = right.midY;
+            const mx = (x1 + x2) / 2;
+            return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+        })
+        .join("");
+    svg.innerHTML = paths;
+}
+
+function openNodeDialog(node, topology) {
+    if (!node) return;
+    const related = topology.edges
+        .filter(([a, b]) => a === node.key || b === node.key)
+        .map(([a, b]) => topology.nodes.find((n) => n.key === (a === node.key ? b : a)))
+        .filter(Boolean);
+    const fieldRows = Object.entries(node.fields || {})
+        .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
+        .join("");
+    const dlg = $("#node-dialog");
+    dlg.innerHTML = `
+        <h3>${REL_LANE_ICON[node.type] || "🔗"} ${escapeHtml(node.label)}</h3>
+        <table>${fieldRows || `<tr><td colspan="2">Sem campos adicionais (só apareceu ligado a outra tabela).</td></tr>`}</table>
+        ${
+            related.length
+                ? `<div class="form-row" style="margin-top:14px">
+                    <label>Ligado a</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px">
+                        ${related.map((r) => `<span class="tag-chip tpl-filled">${REL_LANE_ICON[r.type] || ""} ${escapeHtml(r.label)}</span>`).join("")}
+                    </div>
+                </div>`
+                : ""
+        }
+        <div class="dialog-actions"><button class="ghost" id="node-dialog-close" type="button">Fechar</button></div>`;
+    dlg.showModal();
+    $("#node-dialog-close").onclick = () => dlg.close();
 }
 
 function renderHeatGenerator() {

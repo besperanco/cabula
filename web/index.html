@@ -341,6 +341,28 @@ select option { background: var(--card-bg); color: var(--text); }
 .tag-chip.tpl-filled { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .tag-chip.tpl-flag { color: color-mix(in srgb, var(--primary) 70%, var(--text-dim)); border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
 .tag-chip.tpl-empty { color: var(--text-dim); }
+
+/* ---------- Diagrama de topologia (aba Relacoes) ---------- */
+.rel-diagram-wrap { position: relative; overflow: auto; padding: 8px 0 24px; }
+.rel-diagram { display: flex; gap: 48px; align-items: flex-start; position: relative; z-index: 1; min-width: max-content; }
+.rel-lane { display: flex; flex-direction: column; gap: 14px; min-width: 190px; }
+.rel-lane-title {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim);
+    font-weight: 700; margin-bottom: 2px;
+}
+.rel-node {
+    border: 1px solid var(--border); background: var(--card-bg); border-radius: 10px;
+    padding: 8px 12px; cursor: pointer; transition: border-color 0.12s, transform 0.12s;
+    font-size: 0.82rem;
+}
+.rel-node:hover { border-color: var(--primary); transform: translateY(-1px); }
+.rel-node .rel-node-label { font-weight: 700; color: var(--text); }
+.rel-node .rel-node-sub { color: var(--text-dim); font-size: 0.74rem; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+.rel-diagram-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; overflow: visible; }
+.rel-diagram-svg path { fill: none; stroke: var(--border); stroke-width: 1.5; }
+#node-dialog table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+#node-dialog td { padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; word-break: break-word; }
+#node-dialog td:first-child { color: var(--text-dim); white-space: nowrap; padding-right: 14px; }
 .actions { display: flex; gap: 2px; flex-shrink: 0; }
 .actions button {
     background: transparent; border: none; cursor: pointer; font-size: 0.95rem; color: var(--text-dim);
@@ -519,6 +541,8 @@ dialog.palette-dialog {
 </dialog>
 
 <dialog id="item-dialog"></dialog>
+
+<dialog id="node-dialog" style="width:min(560px, 92vw)"></dialog>
 
 <dialog id="palette-dialog" class="palette-dialog">
     <div class="palette-input-wrap">
