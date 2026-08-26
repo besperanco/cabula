@@ -2340,6 +2340,27 @@ function renderRelations() {
                     são ignoradas. Fica só nesta página, nunca é guardado: perde-se ao recarregar ou
                     mudar de aba.
                 </div>
+                <details style="margin-top:10px">
+                    <summary class="desc" style="cursor:pointer">📋 Comandos úteis para colar (topologia OpenStack)</summary>
+                    <div class="desc" style="margin-top:8px">
+                        Para a vista em diagrama reconhecer as tabelas, corre e cola o output tal
+                        e qual (formato "+---+---+"). A ordem não importa.
+                    </div>
+                    <pre style="white-space:pre-wrap;font-size:0.8rem;margin-top:8px;color:var(--text-dim);font-family:'JetBrains Mono',monospace">openstack server list --long
+openstack port list --server &lt;instancia&gt;
+openstack floating ip list
+openstack network list
+openstack subnet list
+openstack router list
+openstack hypervisor list
+openstack security group list</pre>
+                    <div class="desc" style="margin-top:6px">
+                        <code>server list --long</code> e <code>floating ip list</code> já trazem a
+                        maior parte dos IDs cruzados (VM↔porta↔IP fixo, floating IP↔porta); os
+                        outros dão os nomes das redes/sub-redes/routers que só aparecem por UUID
+                        nesses dois.
+                    </div>
+                </details>
                 ${
                     hasData
                         ? `<div style="display:flex;gap:8px;margin:16px 0 10px;align-items:center;flex-wrap:wrap">
