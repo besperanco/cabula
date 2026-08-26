@@ -2439,8 +2439,15 @@ function relSplitPipeRow(line) {
     return line.split("|").map((c) => c.trim()).filter((c, i, arr) => !((i === 0 || i === arr.length - 1) && c === ""));
 }
 
+// por vezes o terminal cola o comando colado directamente a seguir à borda
+// da tabela, sem quebra de linha (ex.: "openstack ... list+---+---+...") —
+// separa isso antes de partir em linhas, para a borda ainda ser reconhecida.
+function relNormalizeGluedBorders(raw) {
+    return raw.replace(/([^\n+-])(\+-{3,})/g, (_m, pre, border) => `${pre}\n${border}`);
+}
+
 function relFindPipeTables(raw) {
-    const lines = raw.split(/\r?\n/);
+    const lines = relNormalizeGluedBorders(raw).split(/\r?\n/);
     const isBorder = (l) => /^\+[-+]+\+$/.test((l || "").trim());
     const tables = [];
     let i = 0;
