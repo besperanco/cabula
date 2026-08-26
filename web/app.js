@@ -2555,6 +2555,7 @@ function parseOpenstackTopology(raw) {
             const idIdx = colIdx(headers, "ID");
             const nameIdx = colIdx(headers, "Name");
             const fixedIdx = colIdx(headers, "Fixed IP Addresses");
+            const sgIdx = colIdx(headers, "Security Groups");
             const ownerMatch = /--server[= ]+"?([^"\s]+)/.exec(contextBefore || "");
             const owner = ownerMatch ? ownerMatch[1] : null;
             rows.forEach((row) => {
@@ -2569,6 +2570,13 @@ function parseOpenstackTopology(raw) {
                 }
                 if (fixedIdx !== -1 && row[fixedIdx]) {
                     [...row[fixedIdx].matchAll(/subnet_id='([^']+)'/g)].forEach((m) => link(port, getOrCreate("subnet", m[1])));
+                }
+                // "port list --long" traz "Security Groups" (plural, pode ter
+                // varios IDs separados por virgula) — liga Porta<->Security Group
+                // sem precisar de "port show".
+                if (sgIdx !== -1 && row[sgIdx]) {
+                    [...row[sgIdx].matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi)]
+                        .forEach((m) => link(port, getOrCreate("securitygroup", m[0])));
                 }
             });
         } else if (kind === "hypervisor") {
