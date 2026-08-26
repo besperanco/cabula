@@ -532,7 +532,7 @@ async function doExport() {
         exported_at: new Date().toISOString(),
         commands: commands.data.map((c) => ({
             command: c.command, description: c.description, category: c.category, subcategory: c.subcategory,
-            tags: c.tags, example: c.example, notes: c.notes, favorite: c.favorite,
+            tags: c.tags, example: c.example, notes: c.notes, related: c.related, favorite: c.favorite,
         })),
         scenarios: scenarios.data.map((s) => ({
             title: s.title, description: s.description, category: s.category, favorite: s.favorite,
@@ -574,6 +574,7 @@ async function doImport(file) {
         const { data: row, error } = await supabase.rpc("add_command", {
             pin, p_command: c.command, p_description: c.description, p_category: c.category || "Linux",
             p_subcategory: c.subcategory || "", p_tags: c.tags || "", p_example: c.example || "", p_notes: c.notes || "",
+            p_related: c.related || "",
         });
         if (error) return toast(`Erro a importar comandos: ${error.message}`, true);
         if (c.favorite) await supabase.rpc("toggle_command_favorite", { pin, p_id: row.id });
@@ -1045,7 +1046,7 @@ function render() {
         btn.onclick = () => {
             navigator.clipboard.writeText(btn.dataset.seealso);
             toast("Comando copiado");
-            bumpUsage(btn.dataset.seealsoId);
+            if (btn.dataset.seealsoId && btn.dataset.seealsoId !== "null") bumpUsage(btn.dataset.seealsoId);
         };
     });
     listEl.querySelectorAll("[data-fav]").forEach((btn) => (btn.onclick = () => toggleFavorite(btn.dataset.fav, btn.dataset.kind)));
@@ -1141,11 +1142,24 @@ function siblingCommands(item) {
     );
 }
 
+// "Ver também" curado à mão (coluna `related`, comandos separados por "·"),
+// para relações que fazem sentido em troubleshooting mas atravessam
+// subcategorias (ex: "server show" -> "port list", que é de Network, não de
+// Compute) — coisa que siblingCommands() nunca consegue mostrar, porque só
+// olha para comandos da mesma subcategoria. Sem `related` preenchido, cai
+// sempre no comportamento automático de sempre.
+function relatedCommands(item) {
+    if (!item.related) return siblingCommands(item);
+    const names = item.related.split("·").map((s) => s.trim()).filter(Boolean);
+    const byCommand = new Map(state.items.filter((i) => i._kind === "commands").map((i) => [i.command.toLowerCase(), i]));
+    return names.map((name) => byCommand.get(name.toLowerCase()) || { command: name, id: null }).filter((i) => i.id !== item.id);
+}
+
 function renderCard(item) {
     const icon = iconFor(item.category);
     const favIcon = item.favorite ? "⭐" : "☆";
     if (item._kind === "commands") {
-        const siblings = siblingCommands(item).slice(0, 6);
+        const siblings = relatedCommands(item).slice(0, 6);
         return `<div class="entry">
             <div class="entry-top">
                 <div class="entry-body">
@@ -1393,6 +1407,7 @@ function buildFormHtml(item, kind) {
             <div class="form-row"><label>Tags</label><input class="f-tags" value="${escapeAttr(item?.tags)}"></div>
             <div class="form-row"><label>Exemplo</label><textarea class="f-example" rows="2">${escapeHtml(item?.example)}</textarea></div>
             <div class="form-row"><label>Notas</label><textarea class="f-notes" rows="2">${escapeHtml(item?.notes)}</textarea></div>
+            <div class="form-row"><label>Relacionados (opcional)</label><input class="f-related" placeholder="comando · comando · comando" value="${escapeAttr(item?.related)}"></div>
             <div class="dialog-actions">
                 <button class="ghost dialog-cancel" type="button">Cancelar</button>
                 <button class="primary dialog-save" type="button">Guardar</button>
@@ -1448,6 +1463,7 @@ async function saveItem(item, kind, dlg) {
             p_tags: dlg.querySelector(".f-tags").value.trim(),
             p_example: dlg.querySelector(".f-example").value.trim(),
             p_notes: dlg.querySelector(".f-notes").value.trim(),
+            p_related: dlg.querySelector(".f-related").value.trim(),
         };
         if (!payload.p_command || !payload.p_description) return toast("Comando e descrição são obrigatórios", true);
         const fn = item ? "update_command" : "add_command";
