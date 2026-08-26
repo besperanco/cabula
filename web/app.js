@@ -2524,11 +2524,13 @@ function parseOpenstackTopology(raw) {
             const idIdx = colIdx(headers, "ID");
             const fipIdx = colIdx(headers, "Floating IP Address");
             const portIdx = colIdx(headers, "Port");
+            const netIdx = colIdx(headers, "Floating Network");
             rows.forEach((row) => {
                 const id = row[idIdx] || row[fipIdx];
                 const fip = getOrCreate("floatingip", id, row[fipIdx] || id);
                 fip.fields = fieldsFromRow(headers, row);
                 if (portIdx !== -1 && row[portIdx]) link(fip, getOrCreate("port", row[portIdx], row[portIdx]));
+                if (netIdx !== -1 && row[netIdx]) link(fip, getOrCreate("network", row[netIdx]));
             });
         } else if (kind === "port") {
             const idIdx = colIdx(headers, "ID");
@@ -2614,7 +2616,16 @@ function parseOpenstackTopology(raw) {
                         const net = networkByName.get(name.trim()) || getOrCreate("network", `name:${name.trim()}`, name.trim());
                         networkByName.set(name.trim(), net);
                         link(vm, net);
-                        if (ipsStr) vm.fields[`IP em ${name.trim()}`] = ipsStr.trim();
+                        if (ipsStr) {
+                            vm.fields[`IP em ${name.trim()}`] = ipsStr.trim();
+                            // uma das IPs listadas pode ser a floating IP (o
+                            // "server list" mostra fixa e floating juntas) —
+                            // liga a VM ao no de floating IP correspondente.
+                            ipsStr.split(",").map((s) => s.trim()).filter(Boolean).forEach((ip) => {
+                                const fip = [...nodes.values()].find((n) => n.type === "floatingip" && n.fields["Floating IP Address"] === ip);
+                                if (fip) link(vm, fip);
+                            });
+                        }
                     });
                 }
                 if (hostIdx !== -1 && row[hostIdx]) link(getOrCreate("hypervisor", row[hostIdx], row[hostIdx]), vm);
