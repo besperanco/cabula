@@ -2729,6 +2729,20 @@ function drawRelationsDiagramLines(topology) {
     svg.innerHTML = paths;
 }
 
+const REL_STATUS_GOOD = new Set(["active", "up", "running", "enabled", "true", "available"]);
+const REL_STATUS_BAD = new Set(["error", "down", "shutoff", "stopped", "disabled", "false", "paused", "suspended", "unavailable", "n/a"]);
+
+// so' colore campos que parecem estado (Status/State/Power State/...); os
+// restantes ficam sem cor. Valores "neutros" (ex.: Task State "None")
+// tambem ficam sem cor — so' verde/vermelho para bom/mau claro.
+function relStatusClass(fieldName, value) {
+    if (!/status|state/i.test(fieldName)) return "";
+    const v = (value || "").trim().toLowerCase();
+    if (REL_STATUS_GOOD.has(v)) return "rel-status-good";
+    if (REL_STATUS_BAD.has(v)) return "rel-status-bad";
+    return "";
+}
+
 function openNodeDialog(node, topology) {
     if (!node) return;
     const related = topology.edges
@@ -2736,7 +2750,7 @@ function openNodeDialog(node, topology) {
         .map(([a, b]) => topology.nodes.find((n) => n.key === (a === node.key ? b : a)))
         .filter(Boolean);
     const fieldRows = Object.entries(node.fields || {})
-        .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
+        .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="${relStatusClass(k, v)}">${escapeHtml(v)}</td></tr>`)
         .join("");
     const dlg = $("#node-dialog");
     dlg.innerHTML = `
@@ -2747,7 +2761,12 @@ function openNodeDialog(node, topology) {
                 ? `<div class="form-row" style="margin-top:14px">
                     <label>Ligado a</label>
                     <div style="display:flex;flex-wrap:wrap;gap:6px">
-                        ${related.map((r) => `<span class="tag-chip tpl-filled">${REL_LANE_ICON[r.type] || ""} ${escapeHtml(r.label)}</span>`).join("")}
+                        ${related
+                            .map(
+                                (r) =>
+                                    `<span class="tag-chip tpl-filled" data-goto-node="${escapeAttr(r.key)}" style="cursor:pointer" title="Ver ${escapeAttr(r.label)}">${REL_LANE_ICON[r.type] || ""} ${escapeHtml(r.label)}</span>`
+                            )
+                            .join("")}
                     </div>
                 </div>`
                 : ""
@@ -2755,6 +2774,9 @@ function openNodeDialog(node, topology) {
         <div class="dialog-actions"><button class="ghost" id="node-dialog-close" type="button">Fechar</button></div>`;
     dlg.showModal();
     $("#node-dialog-close").onclick = () => dlg.close();
+    dlg.querySelectorAll("[data-goto-node]").forEach((el) => {
+        el.onclick = () => openNodeDialog(topology.nodes.find((n) => n.key === el.dataset.gotoNode), topology);
+    });
 }
 
 function renderHeatGenerator() {
