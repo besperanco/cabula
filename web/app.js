@@ -2353,12 +2353,15 @@ openstack network list
 openstack subnet list
 openstack router list
 openstack hypervisor list
-openstack security group list</pre>
+openstack security group list
+openstack port show &lt;porta&gt;</pre>
                     <div class="desc" style="margin-top:6px">
                         <code>server list --long</code> e <code>floating ip list</code> já trazem a
                         maior parte dos IDs cruzados (VM↔porta↔IP fixo, floating IP↔porta); os
                         outros dão os nomes das redes/sub-redes/routers que só aparecem por UUID
-                        nesses dois.
+                        nesses dois. <code>port show</code> é opcional — junta campos extra (estado,
+                        tipo de binding, security groups) à porta já criada pelo <code>port list</code>,
+                        e é o único jeito de ligar Security Group↔Porta no diagrama.
                     </div>
                 </details>
                 ${
@@ -2495,6 +2498,7 @@ function parseOpenstackTopology(raw) {
     };
 
     const classify = (headers) => {
+        if (headers.length === 2 && hasCol(headers, "Field") && hasCol(headers, "Value")) return "show";
         if (hasCol(headers, "Floating IP Address")) return "floatingip";
         if (hasCol(headers, "Fixed IP Addresses") || hasCol(headers, "MAC Address")) return "port";
         if (hasCol(headers, "Hypervisor Hostname")) return "hypervisor";
@@ -2509,7 +2513,9 @@ function parseOpenstackTopology(raw) {
     // assim uma rede so' referenciada pelo nome (na tabela de VMs) encontra
     // sempre o no ja criado pelo "network list" (por ID), em vez de criar
     // um no duplicado.
-    const KIND_PRIORITY = ["network", "subnet", "hypervisor", "floatingip", "securitygroup", "port", "vm"];
+    // "show" fica sempre por ultimo: so' faz merge de campos extra num no
+    // que ja' devia ter sido criado pela tabela "list" correspondente.
+    const KIND_PRIORITY = ["network", "subnet", "hypervisor", "floatingip", "securitygroup", "port", "vm", "show"];
     const tables = relFindPipeTables(raw).map((t) => ({ ...t, kind: classify(t.headers) }));
     tables.sort((a, b) => KIND_PRIORITY.indexOf(a.kind) - KIND_PRIORITY.indexOf(b.kind));
 
@@ -2541,7 +2547,7 @@ function parseOpenstackTopology(raw) {
                     link(vm, port);
                 }
                 if (fixedIdx !== -1 && row[fixedIdx]) {
-                    [...row[fixedIdx].matchAll(/subnet_id='([^']+)'/g)].forEach((m) => link(port, getOrCreate("subnet", m[1], m[1])));
+                    [...row[fixedIdx].matchAll(/subnet_id='([^']+)'/g)].forEach((m) => link(port, getOrCreate("subnet", m[1])));
                 }
             });
         } else if (kind === "hypervisor") {
@@ -2562,7 +2568,7 @@ function parseOpenstackTopology(raw) {
                 if (!id) return;
                 const subnet = getOrCreate("subnet", id, row[nameIdx] || id);
                 subnet.fields = fieldsFromRow(headers, row);
-                if (netIdx !== -1 && row[netIdx]) link(subnet, getOrCreate("network", row[netIdx], row[netIdx]));
+                if (netIdx !== -1 && row[netIdx]) link(subnet, getOrCreate("network", row[netIdx]));
             });
         } else if (kind === "network") {
             const idIdx = colIdx(headers, "ID");
@@ -2613,6 +2619,32 @@ function parseOpenstackTopology(raw) {
                 }
                 if (hostIdx !== -1 && row[hostIdx]) link(getOrCreate("hypervisor", row[hostIdx], row[hostIdx]), vm);
             });
+        } else if (kind === "show") {
+            // tabela vertical "Field | Value" (ex.: "openstack port show <id>")
+            // — faz merge dos campos extra num no ja' existente (por id), em
+            // vez de criar um no novo; e usa security_group_ids, se vier, para
+            // ligar ao Security Group.
+            const fieldIdx = colIdx(headers, "Field");
+            const valueIdx = colIdx(headers, "Value");
+            const fieldMap = {};
+            rows.forEach((row) => { if (row[fieldIdx]) fieldMap[row[fieldIdx]] = row[valueIdx] || ""; });
+            const id = fieldMap.id;
+            if (!id) return;
+            let target = [...nodes.values()].find((n) => n.id === id);
+            if (!target) {
+                const guessType =
+                    fieldMap.binding_vif_type || fieldMap.mac_address ? "port"
+                    : fieldMap.subnets !== undefined ? "network"
+                    : fieldMap.cidr ? "subnet"
+                    : fieldMap.hypervisor_hostname ? "hypervisor"
+                    : "port";
+                target = getOrCreate(guessType, id, fieldMap.name || id);
+            }
+            Object.assign(target.fields, fieldMap);
+            if (fieldMap.security_group_ids) {
+                [...fieldMap.security_group_ids.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi)]
+                    .forEach((m) => link(target, getOrCreate("securitygroup", m[0])));
+            }
         }
     });
 
