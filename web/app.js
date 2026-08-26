@@ -2355,6 +2355,7 @@ openstack subnet list
 openstack router list
 openstack hypervisor list
 openstack security group list
+openstack security group rule list
 openstack port show &lt;porta&gt;</pre>
                     <div class="desc" style="margin-top:6px">
                         <code>server list --long</code> e <code>floating ip list</code> já trazem a
@@ -2363,6 +2364,9 @@ openstack port show &lt;porta&gt;</pre>
                         nesses dois. <code>port show</code> é opcional — junta campos extra (estado,
                         tipo de binding, security groups) à porta já criada pelo <code>port list</code>,
                         e é o único jeito de ligar Security Group↔Porta no diagrama.
+                        <code>security group rule list</code> também é opcional — resume as regras
+                        dentro de cada grupo e liga grupos entre si quando uma regra referencia um
+                        "Remote Security Group" diferente.
                     </div>
                 </details>
                 ${
@@ -2518,6 +2522,7 @@ function parseOpenstackTopology(raw) {
         if (hasCol(headers, "Hypervisor Hostname")) return "hypervisor";
         if (hasCol(headers, "Network") && hasCol(headers, "Subnet") && !hasCol(headers, "Subnets")) return "subnet";
         if (hasCol(headers, "Subnets")) return "network";
+        if (hasCol(headers, "IP Protocol") && hasCol(headers, "Security Group")) return "secgrouprule";
         if (hasCol(headers, "Description") && hasCol(headers, "Project") && !hasCol(headers, "Networks")) return "securitygroup";
         if (hasCol(headers, "Networks") && hasCol(headers, "Status")) return "vm";
         return null;
@@ -2529,7 +2534,7 @@ function parseOpenstackTopology(raw) {
     // um no duplicado.
     // "show" fica sempre por ultimo: so' faz merge de campos extra num no
     // que ja' devia ter sido criado pela tabela "list" correspondente.
-    const KIND_PRIORITY = ["network", "subnet", "hypervisor", "floatingip", "securitygroup", "port", "vm", "show"];
+    const KIND_PRIORITY = ["network", "subnet", "hypervisor", "floatingip", "securitygroup", "secgrouprule", "port", "vm", "show"];
     const tables = relFindPipeTables(raw).map((t) => ({ ...t, kind: classify(t.headers) }));
     tables.sort((a, b) => KIND_PRIORITY.indexOf(a.kind) - KIND_PRIORITY.indexOf(b.kind));
 
@@ -2610,6 +2615,41 @@ function parseOpenstackTopology(raw) {
                 if (!id) return;
                 const sg = getOrCreate("securitygroup", id, row[nameIdx] || id);
                 sg.fields = fieldsFromRow(headers, row);
+            });
+        } else if (kind === "secgrouprule") {
+            // "security group rule list" nao tem uma linha por security
+            // group, mas varias por grupo (uma por regra) — em vez de criar
+            // um no por linha, resume as regras dentro do no do grupo (ja
+            // criado por "security group list") e liga grupos entre si
+            // quando uma regra referencia um "Remote Security Group" diferente.
+            const protoIdx = colIdx(headers, "IP Protocol");
+            const rangeIdx = colIdx(headers, "IP Range");
+            const portIdx = colIdx(headers, "Port Range");
+            const remoteIdx = colIdx(headers, "Remote Security Group");
+            const sgIdx = colIdx(headers, "Security Group");
+            const rulesBySg = new Map();
+            rows.forEach((row) => {
+                const sgId = row[sgIdx];
+                if (!sgId) return;
+                const proto = row[protoIdx];
+                const range = row[rangeIdx];
+                const portRange = row[portIdx];
+                const remote = row[remoteIdx];
+                const parts = [];
+                if (proto && proto !== "None") parts.push(proto.toUpperCase());
+                if (portRange) parts.push(portRange);
+                if (range && range !== "None") parts.push(`de ${range}`);
+                if (remote && remote !== "None" && remote !== sgId) parts.push(`do grupo ${remote}`);
+                const summary = parts.length ? parts.join(" ") : "qualquer tráfego";
+                if (!rulesBySg.has(sgId)) rulesBySg.set(sgId, []);
+                rulesBySg.get(sgId).push(summary);
+                if (remote && remote !== "None" && remote !== sgId) {
+                    link(getOrCreate("securitygroup", sgId), getOrCreate("securitygroup", remote));
+                }
+            });
+            rulesBySg.forEach((rules, sgId) => {
+                const sg = getOrCreate("securitygroup", sgId);
+                sg.fields["Regras"] = [...new Set(rules)].join("; ");
             });
         } else if (kind === "vm") {
             const idIdx = colIdx(headers, "ID");
