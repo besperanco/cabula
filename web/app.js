@@ -2203,7 +2203,7 @@ function renderTableSearch() {
 // Tabela.
 // ---------------------------------------------------------------------
 
-let relationsState = { raw: "", groups: null, mode: "grupos", topology: null };
+let relationsState = { raw: "", groups: null, mode: "grupos", topology: null, editing: false };
 
 const RELATIONS_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const RELATIONS_IP_RE = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
@@ -2327,6 +2327,7 @@ function renderRelationsGroup(g) {
 
 function renderRelations() {
     const hasData = !!relationsState.groups;
+    const showInput = !hasData || relationsState.editing;
 
     listEl.innerHTML = `
         <div class="entry">
@@ -2365,11 +2366,12 @@ openstack port show &lt;porta&gt;</pre>
                     </div>
                 </details>
                 ${
-                    hasData
+                    hasData && !showInput
                         ? `<div style="display:flex;gap:8px;margin:16px 0 10px;align-items:center;flex-wrap:wrap">
                             <span class="desc" style="margin:0">${relationsState.groups.length} grupo(s) encontrados.</span>
                             <button class="ghost" id="relations-mode-toggle">${relationsState.mode === "diagrama" ? "Ver como grupos" : "Ver como diagrama"}</button>
-                            <button class="ghost" id="relations-clear">Limpar e colar outro texto</button>
+                            <button class="ghost" id="relations-edit">Editar / acrescentar texto</button>
+                            <button class="ghost" id="relations-clear">Limpar tudo</button>
                         </div>
                         ${
                             relationsState.mode === "diagrama"
@@ -2377,19 +2379,26 @@ openstack port show &lt;porta&gt;</pre>
                                 : `<div id="relations-results" style="display:flex;flex-direction:column;gap:10px"></div>`
                         }`
                         : `<div class="form-row" style="margin-top:16px">
-                            <label>Texto a analisar</label>
+                            <label>Texto a analisar${hasData ? " (acrescenta por baixo do que já tinhas)" : ""}</label>
                             <textarea id="relations-input" rows="14"
                                 style="font-family:'JetBrains Mono',monospace;font-size:0.82rem"
-                                placeholder="fdn-instance-1 port b373e4d8-4e3f-48cf-b5c2-2e6dd8c3dc31&#10;fdn-instance-1 4d0abd7a-d885-4a45-afb8-4dce9d0bf459 | 10.129.184.24 | 192.168.3.10"></textarea>
+                                placeholder="fdn-instance-1 port b373e4d8-4e3f-48cf-b5c2-2e6dd8c3dc31&#10;fdn-instance-1 4d0abd7a-d885-4a45-afb8-4dce9d0bf459 | 10.129.184.24 | 192.168.3.10">${escapeHtml(hasData ? relationsState.raw : "")}</textarea>
                         </div>
                         <div class="dialog-actions" style="justify-content:flex-start;margin-top:10px">
+                            ${hasData ? `<button class="ghost" id="relations-edit-cancel">Cancelar</button>` : ""}
                             <button class="primary" id="relations-load">Analisar relações</button>
                         </div>`
                 }
             </div>
         </div>`;
 
-    if (!hasData) {
+    if (showInput) {
+        if (hasData) {
+            $("#relations-edit-cancel").onclick = () => {
+                relationsState.editing = false;
+                renderRelations();
+            };
+        }
         $("#relations-load").onclick = () => {
             const raw = $("#relations-input").value;
             const groups = parseRelations(raw);
@@ -2397,14 +2406,19 @@ openstack port show &lt;porta&gt;</pre>
                 toast("Não encontrei nenhum UUID, IP ou identificador (nome-com-hifen-e-numero) nesse texto.", true);
                 return;
             }
-            relationsState = { raw, groups, mode: "grupos", topology: null };
+            relationsState = { raw, groups, mode: relationsState.mode, topology: null, editing: false };
             renderRelations();
         };
         return;
     }
 
     $("#relations-clear").onclick = () => {
-        relationsState = { raw: "", groups: null, mode: "grupos", topology: null };
+        relationsState = { raw: "", groups: null, mode: "grupos", topology: null, editing: false };
+        renderRelations();
+    };
+
+    $("#relations-edit").onclick = () => {
+        relationsState.editing = true;
         renderRelations();
     };
 
