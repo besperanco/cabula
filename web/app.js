@@ -2754,6 +2754,20 @@ function relStatusClass(fieldName, value) {
     return "";
 }
 
+// comando "show" a sugerir por tipo, quando um no' so' existe por ter sido
+// referenciado noutra tabela (ex.: subnet_id dentro de "port list") e nunca
+// apareceu na sua propria tabela — assim sabe-se exactamente o que colar a
+// seguir para completar a rede, em vez de adivinhar.
+const REL_SHOW_CMD = {
+    vm: (id) => `openstack server show ${id}`,
+    port: (id) => `openstack port show ${id}`,
+    network: (id) => `openstack network show ${id}`,
+    subnet: (id) => `openstack subnet show ${id}`,
+    hypervisor: (id) => `openstack hypervisor show ${id}`,
+    floatingip: (id) => `openstack floating ip show ${id}`,
+    securitygroup: (id) => `openstack security group show ${id}`,
+};
+
 function openNodeDialog(node, topology) {
     if (!node) return;
     const related = topology.edges
@@ -2763,10 +2777,22 @@ function openNodeDialog(node, topology) {
     const fieldRows = Object.entries(node.fields || {})
         .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="${relStatusClass(k, v)}">${escapeHtml(v)}</td></tr>`)
         .join("");
+    const suggestedCmd = !fieldRows && REL_SHOW_CMD[node.type] ? REL_SHOW_CMD[node.type](node.id) : null;
     const dlg = $("#node-dialog");
     dlg.innerHTML = `
         <h3>${REL_LANE_ICON[node.type] || "🔗"} ${escapeHtml(node.label)}</h3>
         <table>${fieldRows || `<tr><td colspan="2">Sem campos adicionais (só apareceu ligado a outra tabela).</td></tr>`}</table>
+        ${
+            suggestedCmd
+                ? `<div class="form-row" style="margin-top:12px">
+                    <label>Falta informação — corre isto e cola o resultado na aba</label>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <code style="flex:1;padding:6px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--border);font-size:0.8rem;overflow-x:auto;white-space:nowrap">${escapeHtml(suggestedCmd)}</code>
+                        <button class="ghost" id="node-dialog-copy-cmd" type="button">Copiar</button>
+                    </div>
+                </div>`
+                : ""
+        }
         ${
             related.length
                 ? `<div class="form-row" style="margin-top:14px">
@@ -2785,6 +2811,12 @@ function openNodeDialog(node, topology) {
         <div class="dialog-actions"><button class="ghost" id="node-dialog-close" type="button">Fechar</button></div>`;
     dlg.showModal();
     $("#node-dialog-close").onclick = () => dlg.close();
+    if (suggestedCmd) {
+        $("#node-dialog-copy-cmd").onclick = () => {
+            navigator.clipboard.writeText(suggestedCmd);
+            toast("Comando copiado");
+        };
+    }
     dlg.querySelectorAll("[data-goto-node]").forEach((el) => {
         el.onclick = () => openNodeDialog(topology.nodes.find((n) => n.key === el.dataset.gotoNode), topology);
     });
